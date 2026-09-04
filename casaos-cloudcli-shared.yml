@@ -21,6 +21,9 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - ANTHROPIC_AUTH_TOKEN=${ANTHROPIC_AUTH_TOKEN}
+      # Prepend the mounted host bin dir so the container can run the host's
+      # Cursor `agent` binary (mounted at /host-bin below).
+      - PATH=/host-bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     ports:
       - target: 3001
         published: "50082"
@@ -61,6 +64,16 @@ services:
       - type: bind
         source: /home/asiq/.cursor
         target: /data/.cursor
+        bind:
+          create_host_path: true
+      # Cursor CLI: the host installs Cursor's agent CLI as `agent` under
+      # ~/.local/bin (curl https://cursor.com/install -fsS | bash). Mount
+      # that dir read-write so the container can run the same binary the
+      # host uses and read its auth from ~/.cursor above. Delete if you do
+      # not use Cursor. Requires the code fix that resolves `agent`.
+      - type: bind
+        source: /home/asiq/.local/bin
+        target: /host-bin
         bind:
           create_host_path: true
     networks:
