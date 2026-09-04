@@ -42,9 +42,10 @@ FROM node:22-bookworm-slim AS runtime
 ENV NODE_ENV=production
 ENV HOST=0.0.0.0
 ENV SERVER_PORT=3001
-# CloudCLI persists SQLite/auth/assets under the user home by default; point it
-# at a volume we control so container state survives rebuilds.
-ENV HOME=/home/node
+# CloudCLI persists SQLite/auth/assets under the user home by default. Point
+# HOME and the DB at /data so ALL app state lives under one persistent
+# directory that a single volume/bind mount can back.
+ENV HOME=/data
 ENV DATABASE_PATH=/data/auth.db
 
 RUN apt-get update \
@@ -68,7 +69,8 @@ RUN mkdir -p /data /home/node \
   && chown -R node:node /data /home/node
 
 # Coding-agent CLIs so provider auth/session features work out of the box.
-# Installed for the node user; API keys are supplied via env / the UI.
+# Installed for the node user under /home/node (ephemeral — reinstalled on
+# image rebuild); app state persists under /data via HOME/DATABASE_PATH.
 USER node
 ENV PATH=/home/node/.npm-global/bin:$PATH
 ENV NPM_CONFIG_PREFIX=/home/node/.npm-global
