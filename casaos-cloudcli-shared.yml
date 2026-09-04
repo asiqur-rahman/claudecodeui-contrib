@@ -1,0 +1,159 @@
+name: cloudcli-shared
+services:
+  cloudcli:
+    container_name: cloudcli-shared
+    hostname: cloudcli
+    image: asiqurrahman/cloudcli-ui:production
+    # Run as the host user (uid/gid 1000 = 'asiq' on the VPS) so the
+    # container's claude/codex/command-code write to the shared host
+    # dotdirs with the same ownership as the host CLIs. Adjust to your
+    # host uid if 'asiq' is not 1000 (check: id -u asiq).
+    user: "1000:1000"
+    restart: unless-stopped
+    cpu_shares: 90
+    deploy:
+      resources:
+        limits:
+          memory: 2048M
+    environment:
+      - TZ=Asia/Dhaka
+      # Optional API keys: leave empty to use the shared host logins.
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_AUTH_TOKEN=${ANTHROPIC_AUTH_TOKEN}
+    ports:
+      - target: 3001
+        published: "50082"
+        protocol: tcp
+    volumes:
+      # CloudCLI's own app state (sqlite, settings, chat history). Must be
+      # writable by uid 1000 — use a path owned by 'asiq', not a root-owned
+      # /DATA path, or chown it first: sudo chown -R 1000:1000 <dir>.
+      - type: bind
+        source: /home/asiq/.cloudcli
+        target: /data
+        bind:
+          create_host_path: true
+      # --- Reuse the HOST's existing agent logins (claude / codex /
+      # command-code / cursor). Delete any line you do not want to share.
+      # The container uses its own bundled binaries; only auth/session
+      # state under these dirs is shared with the host CLIs.
+      - type: bind
+        source: /home/asiq/.claude
+        target: /data/.claude
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /home/asiq/.claude.json
+        target: /data/.claude.json
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /home/asiq/.commandcode
+        target: /data/.commandcode
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /home/asiq/.codex
+        target: /data/.codex
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /home/asiq/.cursor
+        target: /data/.cursor
+        bind:
+          create_host_path: true
+    networks:
+      - cloudcli-network
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 45s
+    x-casaos:
+      envs:
+        - container: TZ
+          description:
+            en_US: Timezone
+        - container: ANTHROPIC_API_KEY
+          description:
+            en_US: Optional. Overrides host login for Claude/Command Code. Leave empty to use the shared host dotdirs.
+        - container: OPENAI_API_KEY
+          description:
+            en_US: Optional. Overrides host login for Codex. Leave empty to use the shared host dotdirs.
+        - container: ANTHROPIC_AUTH_TOKEN
+          description:
+            en_US: Optional. Long-lived Anthropic OAuth token.
+      volumes:
+        - container: /data
+          description:
+            en_US: CloudCLI app state (writable by uid 1000, host path owned by asiq).
+        - container: /data/.claude
+          description:
+            en_US: Shared with host ~/.claude (Claude Code auth + history)
+        - container: /data/.commandcode
+          description:
+            en_US: Shared with host ~/.commandcode (Command Code auth)
+        - container: /data/.codex
+          description:
+            en_US: Shared with host ~/.codex (Codex auth)
+        - container: /data/.cursor
+          description:
+            en_US: Shared with host ~/.cursor (Cursor state; needs cursor-agent binary)
+      ports:
+        - container: "3001"
+          description:
+            en_US: Web UI, API, and WebSocket entry point
+      networks:
+        - container: cloudcli-network
+          description:
+            en_US: Isolated CloudCLI bridge network
+
+networks:
+  cloudcli-network:
+    name: cloudcli-network
+    driver: bridge
+
+x-casaos:
+  architectures:
+    - amd64
+  author: Md. Asiqur Rahman Khan
+  category: Developer Tools
+  description:
+    en_US: Web dashboard for coding-agent CLIs. This variant REUSES the host
+      machine's existing claude / codex / command-code / cursor logins by
+      bind-mounting the host dotdirs, and runs as the host uid (1000) so file
+      ownership stays consistent with the host CLIs.
+  developer: asiqur-rahman
+  icon: https://raw.githubusercontent.com/asiqur-rahman/claudecodeui-contrib/production/public/logo.svg
+  id: com.asiqurrahman.cloudcli-shared
+  index: /
+  is_uncontrolled: false
+  main: cloudcli
+  port_map: "50082"
+  scheme: http
+  store_app_id: cloudcli-shared
+  tagline:
+    en_US: CloudCLI UI (shared host logins)
+  title:
+    en_US: CloudCLI (Shared)
+  tips:
+    before_install:
+      en_US: >-
+        This variant shares the VPS host's existing agent logins. Prereqs:
+        (1) the host user must be uid 1000 — verify with 'id -u asiq' and
+        adjust the user: line if not; (2) create and chown the app-state dir:
+        'mkdir -p /home/asiq/.cloudcli && chown -R 1000:1000
+        /home/asiq/.cloudcli'; (3) the container's bundled claude/codex/
+        command-code CLIs are SEPARATE VERSIONS from the host's — they will
+        read and write the same ~/.claude, ~/.codex and ~/.commandcode
+        dirs, which can change files the host CLI also uses. Cursor needs
+        the cursor-agent binary which is not bundled, so that mount alone
+        does not enable Cursor. Edit or delete any mount you do not want.
+        Delete this app and re-import casaos-cloudcli.yml to return to the
+        fully isolated setup.

@@ -105,8 +105,11 @@ x-casaos:
         'docker exec -it cloudcli codex /login', and
         'docker exec -it cloudcli command-code /login'. Auth and all state
         persist under the mounted /DATA/AppData/cloudcli/data directory.
-        Cursor and OpenCode are not bundled. The production tag always points
-        at the latest build published by the fork's pipeline — pull again and
+        Cursor and OpenCode are not bundled. To instead reuse the host
+        machine's existing claude / codex / command-code logins, import the
+        companion casaos-cloudcli-shared.yml (mounts the host dotdirs and
+        runs as your host uid). The production tag always points at the
+        latest build published by the fork's pipeline — pull again and
         recreate the container to update. Back up the mounted data directory,
         which holds the database, settings, chat history, assets, and
         per-provider state.
