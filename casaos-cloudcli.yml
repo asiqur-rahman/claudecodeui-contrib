@@ -12,6 +12,9 @@ services:
           memory: 2048M
     environment:
       - TZ=Asia/Dhaka
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_AUTH_TOKEN=${ANTHROPIC_AUTH_TOKEN}
     ports:
       - target: 3001
         published: "50081"
@@ -39,6 +42,15 @@ services:
         - container: TZ
           description:
             en_US: Timezone
+        - container: ANTHROPIC_API_KEY
+          description:
+            en_US: Optional. Authenticates Claude Code and Command Code against Anthropic without an interactive login. Leave empty to log in with /login inside the container instead.
+        - container: OPENAI_API_KEY
+          description:
+            en_US: Optional. Authenticates OpenAI Codex without an interactive login. Leave empty to log in with codex /login inside the container instead.
+        - container: ANTHROPIC_AUTH_TOKEN
+          description:
+            en_US: Optional. Long-lived Anthropic OAuth token (preferred over an API key for Claude Code).
       volumes:
         - container: /data
           description:
@@ -82,11 +94,19 @@ x-casaos:
     en_US: CloudCLI
   tips:
     before_install:
-      en_US: This is a personal fork build (asiqurrahman/cloudcli-ui), not the
-        official siteboon/claudecodeui image. Configure authentication and
-        provider credentials from the web UI after first launch; no
-        credentials are baked into the image. The :production tag always
-        points at the latest build published by the fork's pipeline — pull
-        again and recreate the container to update. Back up the mounted
-        /DATA/AppData/cloudcli/data directory — it holds the database,
-        settings, chat history, assets, and per-provider state.
+      en_US: >-
+        This is a personal fork build (asiqurrahman/cloudcli-ui), not the
+        official siteboon/claudecodeui image. The image bundles the Claude
+        Code, OpenAI Codex and Command Code CLIs. Provider auth options are
+        (1) set ANTHROPIC_API_KEY or OPENAI_API_KEY in the env fields below
+        for instant Claude and Codex auth, or (2) leave them empty and run
+        one-time interactive logins inside the container, for example
+        'docker exec -it cloudcli claude /login',
+        'docker exec -it cloudcli codex /login', and
+        'docker exec -it cloudcli command-code /login'. Auth and all state
+        persist under the mounted /DATA/AppData/cloudcli/data directory.
+        Cursor and OpenCode are not bundled. The production tag always points
+        at the latest build published by the fork's pipeline — pull again and
+        recreate the container to update. Back up the mounted data directory,
+        which holds the database, settings, chat history, assets, and
+        per-provider state.
