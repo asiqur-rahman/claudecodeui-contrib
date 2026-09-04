@@ -159,14 +159,20 @@ pipeline {
       }
       steps {
         script {
-          // Suggest the next release tag from the current package.json
-          // version (e.g. 1.37.2 -> v1.37.2 for a straight re-push, or bump
-          // manually in the approval). The operator can override in the
-          // approval below; nothing is tagged or released by this pipeline.
+          // Suggest the version tag from the current package.json version
+          // (e.g. 1.37.2 -> v1.37.2). Runs node inside the same throwaway
+          // node container as the other stages -- the Jenkins host itself
+          // has no node binary (exit-127 trap on a bare `node -p`). The
+          // operator can override in the approval below; nothing is tagged
+          // or released by this pipeline.
           env.SUGGESTED_VERSION = sh(
             script: '''
               set -euo pipefail
-              node -p "const v = require('./package.json').version; 'v' + v"
+              docker run --rm \
+                -u "$(id -u):$(id -g)" \
+                -v "$HOST_WORKSPACE:/workspace" -w /workspace \
+                node:22-bookworm-slim \
+                node -p "const v = require('./package.json').version; 'v' + v"
             ''',
             returnStdout: true
           ).trim()
