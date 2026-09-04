@@ -190,10 +190,20 @@ pipeline {
         // BuildKit's COPY cache is exactly what bit local rebuilds). Tagged
         // locally as cloudcli-ui:local so the push stage has a concrete
         // image to retag -- nothing leaves the machine yet.
+        //
+        // Cannot `cd "$HOST_WORKSPACE"` on the Jenkins host: HOST_WORKSPACE
+        // is a path on the DOCKER HOST (e.g. /var/lib/docker/volumes/...),
+        // which does not exist inside the Jenkins container. Instead run
+        // docker compose inside a docker CLI container that bind-mounts the
+        // host workspace and the host docker socket, exactly like the other
+        // stages mount HOST_WORKSPACE for the host daemon.
         sh '''
           set -euo pipefail
-          cd "$HOST_WORKSPACE"
-          docker compose -f compose.yaml build --no-cache cloudcli
+          docker run --rm \
+            -v "$HOST_WORKSPACE:/workspace" -w /workspace \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            docker:27-cli \
+            docker compose -f compose.yaml build --no-cache cloudcli
         '''
       }
     }
