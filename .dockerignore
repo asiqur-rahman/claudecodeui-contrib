@@ -1,0 +1,42 @@
+# VCS
+.git
+.gitignore
+.github
+
+# Dependencies
+node_modules
+
+# Build output
+dist
+dist-server
+dist-server.next
+dist-server.old
+dist-ssr
+
+# Env
+.env
+.env.*
+!.env.example
+
+# Local CloudCLI state
+.cloudcli
+
+# Agent tooling / orchestration — not part of the app image
+.agents
+.agents/**
+_bmad
+_bmad-output
+.commandcode
+
+# Logs / temp / OS
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+*.tsbuildinfo
+
+# Docs and official sandbox templates are not needed inside the app image
+docs
+docker
+release
+electron/dist

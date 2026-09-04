@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Shell(uv:*)",
+      "Shell(gh:*)",
+      "powershell",
+      "Shell(git:*)",
+      "Shell(git checkout main 2>&1; echo ---; git log --oneline -1 main; git log --oneline -1 origin/production; echo ---; git diff --stat main origin/production)",
+      "Shell(echo \"HOME=%USERPROFILE%\"; dir /b \"%USERPROFILE%\\.commandcode\" 2>nul & echo ---PROJECTS--- & dir /b \"%USERPROFILE%\\.commandcode\\projects\" 2>nul & echo ---SKILLS--- & dir /b \"%USERPROFILE%\\.commandcode\\skills\" 2>nul & echo ---MCP--- & dir /b \"%USERPROFILE%\\.commandcode\\mcp.json\" 2>nul)",
+      "Shell(node --check server/modules/providers/list/command-code/command-code-runtime.provider.js)",
+      "Shell(npx tsc --noEmit -p tsconfig.json 2 >& 1)",
+      "Shell(Select-Object:*)",
+      "Shell(del:*)",
+      "Shell(npx tsc --noEmit -p server/tsconfig.json 2 >& 1)",
+      "Shell(findstr:*)",
+      "Shell(del vitest-focus.log 2>nul & echo cleaned)",
+      "Shell(type:*)",
+      "Shell(npm:*)"
+    ],
+    "deny": [],
+    "defaultMode": "default"
+  }
+}

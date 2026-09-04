@@ -1,0 +1,37 @@
+# CloudCLI UI — local container runtime
+# This compose file builds and runs the app image defined by the root
+# Dockerfile. The official `docker/` sandbox templates are intentionally
+# separate and untouched.
+#
+# Usage:
+#   docker compose up -d --build   # build + start
+#   docker compose down            # stop
+#   make up / make down / make build / make clean
+
+services:
+  cloudcli:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: cloudcli-ui:local
+    container_name: cloudcli-ui
+    restart: unless-stopped
+    ports:
+      - "${CLOUDCLI_PORT:-3001}:3001"
+    environment:
+      HOST: 0.0.0.0
+      SERVER_PORT: 3001
+      DATABASE_PATH: /data/auth.db
+      TZ: ${TZ:-UTC}
+    volumes:
+      # Named volume for CloudCLI state (SQLite, assets, provider data).
+      - cloudcli-data:/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  cloudcli-data:
