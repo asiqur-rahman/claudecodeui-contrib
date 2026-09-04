@@ -15,7 +15,12 @@ RUN apt-get update \
 
 COPY package.json package-lock.json ./
 
-RUN npm ci --include=dev
+# Install all deps without lifecycle scripts (the repo's fix-node-pty
+# postinstall is Windows-oriented and fails in a Linux slim build). Native
+# modules are compiled explicitly right after so better-sqlite3 and node-pty
+# ship working binaries built against this container's Node ABI.
+RUN npm ci --include=dev --ignore-scripts \
+  && npm rebuild better-sqlite3 node-pty
 
 ###############################################################################
 # Stage 2: build — compile the client (vite) and server (tsc + tsc-alias)
@@ -59,7 +64,8 @@ COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/shared ./shared
 COPY --from=build /app/electron ./electron
 
-RUN mkdir -p /data /home/node && chown -R node:node /app /data /home/node
+RUN mkdir -p /data /home/node \
+  && chown -R node:node /data /home/node
 
 # Coding-agent CLIs so provider auth/session features work out of the box.
 # Installed for the node user; API keys are supplied via env / the UI.
