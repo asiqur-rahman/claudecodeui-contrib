@@ -65,15 +65,14 @@ COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/shared ./shared
 COPY --from=build /app/electron ./electron
 
-RUN mkdir -p /data /home/node \
-  && chown -R node:node /data /home/node
+# Run as root so a bind-mounted /data (e.g. CasaOS /DATA/AppData/...) works
+# regardless of the host directory's ownership. The node user (uid 1000)
+# cannot write to a root-owned bind mount, which breaks first-run DB writes.
+RUN mkdir -p /data
 
 # Coding-agent CLIs so provider auth/session features work out of the box.
-# Installed for the node user under /home/node (ephemeral — reinstalled on
-# image rebuild); app state persists under /data via HOME/DATABASE_PATH.
-USER node
-ENV PATH=/home/node/.npm-global/bin:$PATH
-ENV NPM_CONFIG_PREFIX=/home/node/.npm-global
+# Installed globally as root; provider auth state persists under /data via
+# HOME/DATABASE_PATH.
 RUN npm install -g @anthropic-ai/claude-code @openai/codex command-code 2>/dev/null || true
 
 VOLUME ["/data"]

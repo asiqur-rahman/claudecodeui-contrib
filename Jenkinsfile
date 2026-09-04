@@ -100,7 +100,7 @@ pipeline {
             -u "$(id -u):$(id -g)" -e HOME=/tmp \
             -v "$HOST_WORKSPACE:/workspace" -w /workspace \
             node:22-bookworm-slim \
-            bash -c "apt-get update && apt-get install -y --no-install-recommends python3 make g++ git && rm -rf /var/lib/apt/lists/* && npm ci --include=dev --ignore-scripts && npm rebuild better-sqlite3 node-pty"
+            bash -c "apt-get update && apt-get install -y --no-install-recommends python3 make g++ git && rm -rf /var/lib/apt/lists/* && rm -rf node_modules && npm ci --include=dev --ignore-scripts && npm rebuild better-sqlite3 node-pty"
         '''
       }
     }

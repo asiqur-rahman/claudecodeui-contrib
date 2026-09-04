@@ -1,35 +1,29 @@
 name: cloudcli
 services:
   cloudcli:
-    cpu_shares: 90
-    command: []
     container_name: cloudcli
+    hostname: cloudcli
+    image: asiqurrahman/cloudcli-ui:production
+    restart: unless-stopped
+    cpu_shares: 90
     deploy:
       resources:
         limits:
           memory: 2048M
     environment:
       - TZ=Asia/Dhaka
-    hostname: cloudcli
-    image: asiqurrahman/cloudcli:production
-    labels:
-      icon: https://raw.githubusercontent.com/asiqur-rahman/claudecodeui-contrib/production/public/logo.svg
-    restart: unless-stopped
+    ports:
+      - target: 3001
+        published: "50081"
+        protocol: tcp
     volumes:
       - type: bind
         source: /DATA/AppData/cloudcli/data
         target: /data
         bind:
           create_host_path: true
-    ports:
-      - target: 3001
-        published: "50081"
-        protocol: tcp
-    devices: []
-    cap_add: []
     networks:
       - cloudcli-network
-    privileged: false
     healthcheck:
       test:
         - CMD
@@ -74,7 +68,6 @@ x-casaos:
       git, run a terminal, and configure MCP servers — all from any browser or
       mobile device.
   developer: asiqur-rahman
-  hostname: ""
   icon: https://raw.githubusercontent.com/asiqur-rahman/claudecodeui-contrib/production/public/logo.svg
   id: com.asiqurrahman.cloudcli
   index: /
@@ -85,22 +78,15 @@ x-casaos:
   store_app_id: cloudcli
   tagline:
     en_US: Web UI for Claude Code & coding agents
-  thumbnail: ""
   title:
-    custom: ""
     en_US: CloudCLI
-  networks:
-    - container: cloudcli-network
-      description:
-        en_US: Isolated bridge network for the CloudCLI container
   tips:
     before_install:
-      en_US: This is a personal fork's build (asiqurrahman/cloudcli), not the
+      en_US: This is a personal fork build (asiqurrahman/cloudcli-ui), not the
         official siteboon/claudecodeui image. Configure authentication and
         provider credentials from the web UI after first launch; no
         credentials are baked into the image. The :production tag always
         points at the latest build published by the fork's pipeline — pull
-        again and recreate the container to update, no manifest edit needed.
-        Pin a specific tag instead if you want to roll back to a known-good
-        build. Back up the mounted /data directory — it holds the database,
+        again and recreate the container to update. Back up the mounted
+        /DATA/AppData/cloudcli/data directory — it holds the database,
         settings, chat history, assets, and per-provider state.
