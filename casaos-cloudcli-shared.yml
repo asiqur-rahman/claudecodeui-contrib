@@ -145,15 +145,22 @@ x-casaos:
   tips:
     before_install:
       en_US: >-
-        This variant shares the VPS host's existing agent logins. Prereqs:
-        (1) the host user must be uid 1000 — verify with 'id -u asiq' and
-        adjust the user: line if not; (2) create and chown the app-state dir:
-        'mkdir -p /home/asiq/.cloudcli && chown -R 1000:1000
-        /home/asiq/.cloudcli'; (3) the container's bundled claude/codex/
-        command-code CLIs are SEPARATE VERSIONS from the host's — they will
-        read and write the same ~/.claude, ~/.codex and ~/.commandcode
-        dirs, which can change files the host CLI also uses. Cursor needs
-        the cursor-agent binary which is not bundled, so that mount alone
-        does not enable Cursor. Edit or delete any mount you do not want.
-        Delete this app and re-import casaos-cloudcli.yml to return to the
-        fully isolated setup.
+        This variant shares the VPS host's existing agent logins by mounting
+        the host dotdirs into the container and running as the host uid.
+        Prereqs: (1) host user must be uid 1000 — verify 'id -u asiq' and
+        adjust the user: line if not; (2) create and chown the app-state dir
+        with 'mkdir -p /home/asiq/.cloudcli && chown -R 1000:1000
+        /home/asiq/.cloudcli'. Per provider (verified against the real API):
+        Command Code shows authenticated as soon as the host
+        ~/.commandcode/auth.json is mounted (the bundled CLI reads the same
+        account login). Claude Code reads the host ~/.claude/.credentials.json
+        OAuth login; if the container's newer claude rewrites it, the host
+        claude stays valid since they share the file. Codex reads host
+        ~/.codex/auth.json; if it shows 'No valid tokens found' after import,
+        re-login once inside the container with 'docker exec -it cloudcli
+        codex login'. Cursor needs the cursor-agent binary which is NOT
+        bundled and has no npm package, so its mount alone does not enable
+        it. OpenCode is not bundled. The container's CLIs are separate
+        versions from the host's and will read and write the same dotdirs.
+        Edit or delete any mount you do not want. Delete this app and
+        re-import casaos-cloudcli.yml to return to the isolated setup.
