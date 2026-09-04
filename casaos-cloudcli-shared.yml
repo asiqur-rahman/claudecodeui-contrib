@@ -66,14 +66,22 @@ services:
         target: /data/.cursor
         bind:
           create_host_path: true
-      # Cursor CLI: the host installs Cursor's agent CLI as `agent` under
-      # ~/.local/bin (curl https://cursor.com/install -fsS | bash). Mount
-      # that dir read-write so the container can run the same binary the
-      # host uses and read its auth from ~/.cursor above. Delete if you do
-      # not use Cursor. Requires the code fix that resolves `agent`.
+      # Cursor CLI: the host installs Cursor's agent CLI under ~/.local/bin
+      # (curl https://cursor.com/install -fsS | bash) as `agent`, a symlink
+      # into ~/.local/share/cursor-agent/versions/<ver>/cursor-agent. Mount
+      # both ~/.local/bin and ~/.local/share at the SAME host paths so the
+      # symlink resolves inside the container, and prepend /host-bin to
+      # PATH so the container runs the host's `agent`. The bundled code
+      # resolves `cursor-agent` then `agent`. Delete if you do not use
+      # Cursor.
       - type: bind
         source: /home/asiq/.local/bin
         target: /host-bin
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /home/asiq/.local/share
+        target: /home/asiq/.local/share
         bind:
           create_host_path: true
     networks:
@@ -171,9 +179,11 @@ x-casaos:
         claude stays valid since they share the file. Codex reads host
         ~/.codex/auth.json; if it shows 'No valid tokens found' after import,
         re-login once inside the container with 'docker exec -it cloudcli
-        codex login'. Cursor needs the cursor-agent binary which is NOT
-        bundled and has no npm package, so its mount alone does not enable
-        it. OpenCode is not bundled. The container's CLIs are separate
-        versions from the host's and will read and write the same dotdirs.
-        Edit or delete any mount you do not want. Delete this app and
-        re-import casaos-cloudcli.yml to return to the isolated setup.
+        codex login'. Cursor: the host's ~/.local/bin/agent is mounted and
+        the provider now resolves the 'agent' binary, but Cursor auth is
+        machine-bound and cannot be shared by file mount — run 'docker exec
+        -it cloudcli agent login' once in the container and open the printed
+        browser URL. OpenCode is not bundled. The container's CLIs are
+        separate versions from the host's and will read and write the same
+        dotdirs. Edit or delete any mount you do not want. Delete this app
+        and re-import casaos-cloudcli.yml to return to the isolated setup.
