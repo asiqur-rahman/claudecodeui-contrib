@@ -4,10 +4,9 @@ services:
     container_name: cloudcli-shared
     hostname: cloudcli
     image: asiqurrahman/cloudcli-ui:production
-    # Run as the host user (uid/gid 1000 = 'asiq' on the VPS) so the
-    # container's claude/codex/command-code write to the shared host
-    # dotdirs with the same ownership as the host CLIs. Adjust to your
-    # host uid if 'asiq' is not 1000 (check: id -u asiq).
+    # Run as uid 1000 (the typical first host user) so the files under
+    # /DATA/AppData/cloudcli can also be used by host CLIs that run as that
+    # user. If your host user is a different uid, adjust this line.
     user: "1000:1000"
     restart: unless-stopped
     cpu_shares: 90
@@ -17,13 +16,10 @@ services:
           memory: 2048M
     environment:
       - TZ=Asia/Dhaka
-      # Optional API keys: leave empty to use the shared host logins.
+      # Optional API keys: leave empty to log in interactively instead.
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - ANTHROPIC_AUTH_TOKEN=${ANTHROPIC_AUTH_TOKEN}
-      # Prepend the mounted host bin dir so the container can run the host's
-      # Cursor `agent` binary (mounted at /host-bin below).
-      - PATH=/host-bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     ports:
       - target: 3001
         published: "50082"
@@ -34,59 +30,21 @@ services:
       # dotdir is a first-class folder here, kept visible on the host under
       # /DATA/AppData/cloudcli/.claude, ./.codex, ./.commandcode, ./.cursor.
       #
+      # No host-user paths are mounted (e.g. /home/<user>/.claude) because
+      # Docker bind sources are literal host paths and cannot auto-detect the
+      # logged-in user — CasaOS runs containers as root, so any ${HOME}
+      # interpolation would resolve to /root and break. State is therefore
+      # username-independent: the bundled CLIs create their dotdirs under
+      # /data (HOME=/data) automatically.
+      #
       # CasaOS creates /DATA/AppData/cloudcli as root, but this container
-      # runs as uid 1000 to match host CLIs, so create it once and chown:
+      # runs as uid 1000 so the same files can be shared with host CLIs that
+      # run as the first (uid-1000) user. Create it once and chown:
       #   sudo mkdir -p /DATA/AppData/cloudcli
       #   sudo chown -R 1000:1000 /DATA/AppData/cloudcli
       - type: bind
         source: /DATA/AppData/cloudcli
         target: /data
-        bind:
-          create_host_path: true
-      # Provider dotdirs live under /data (HOME=/data), so the app's bundled
-      # CLIs create and read them at /data/.claude etc. — no separate host
-      # mounts needed. The following bind mounts are OPTIONAL and only for
-      # reusing logins a HOST CLI already created elsewhere (e.g. in
-      # /home/asiq): delete any you do not want. To point the host's own
-      # claude/codex/command-code at the CasaOS-managed state instead, set
-      # each CLI's HOME/config dir to /DATA/AppData/cloudcli on the host.
-      - type: bind
-        source: /home/asiq/.claude
-        target: /data/.claude
-        bind:
-          create_host_path: true
-      - type: bind
-        source: /home/asiq/.claude.json
-        target: /data/.claude.json
-        bind:
-          create_host_path: true
-      - type: bind
-        source: /home/asiq/.commandcode
-        target: /data/.commandcode
-        bind:
-          create_host_path: true
-      - type: bind
-        source: /home/asiq/.codex
-        target: /data/.codex
-        bind:
-          create_host_path: true
-      - type: bind
-        source: /home/asiq/.cursor
-        target: /data/.cursor
-        bind:
-          create_host_path: true
-      # Cursor CLI: if the host runs Cursor's agent CLI (`agent`, installed
-      # via 'curl https://cursor.com/install -fsS | bash'), mount its bin +
-      # version dirs so the container reuses the same binary. Delete if you
-      # do not use Cursor or prefer the bundled resolution.
-      - type: bind
-        source: /home/asiq/.local/bin
-        target: /host-bin
-        bind:
-          create_host_path: true
-      - type: bind
-        source: /home/asiq/.local/share
-        target: /home/asiq/.local/share
         bind:
           create_host_path: true
     networks:
@@ -119,18 +77,6 @@ services:
         - container: /data
           description:
             en_US: All CloudCLI + provider state under /DATA/AppData/cloudcli (preserved by CasaOS).
-        - container: /data/.claude
-          description:
-            en_US: Optional host ~/.claude share (delete the mount if unused)
-        - container: /data/.commandcode
-          description:
-            en_US: Optional host ~/.commandcode share (delete the mount if unused)
-        - container: /data/.codex
-          description:
-            en_US: Optional host ~/.codex share (delete the mount if unused)
-        - container: /data/.cursor
-          description:
-            en_US: Optional host ~/.cursor share (delete the mount if unused)
       ports:
         - container: "3001"
           description:
@@ -152,10 +98,8 @@ x-casaos:
   category: Developer Tools
   description:
     en_US: Web dashboard for coding-agent CLIs. All state is preserved by
-      CasaOS under /DATA/AppData/cloudcli (app + provider dotdirs together).
-      Runs as uid 1000 and can additionally reuse the host machine's
-      existing claude / codex / command-code / cursor logins via optional
-      bind mounts.
+      CasaOS under /DATA/AppData/cloudcli (app + provider dotdirs together),
+      running as uid 1000 so host CLIs can use the same files.
   developer: asiqur-rahman
   icon: https://raw.githubusercontent.com/asiqur-rahman/claudecodeui-contrib/production/public/logo.svg
   id: com.asiqurrahman.cloudcli-shared
@@ -166,7 +110,7 @@ x-casaos:
   scheme: http
   store_app_id: cloudcli-shared
   tagline:
-    en_US: CloudCLI UI (uid 1000, optional host-login reuse)
+    en_US: CloudCLI UI (uid 1000 state under /DATA/AppData/cloudcli)
   title:
     en_US: CloudCLI (Shared)
   tips:
@@ -176,18 +120,15 @@ x-casaos:
         /DATA/AppData/cloudcli — the database, settings, chat history,
         assets, and each provider's login state (.claude/.codex/
         .commandcode/.cursor) survive container updates and recreations as
-        one folder. This container runs as uid 1000 so files match host
-        CLIs; create the folder once on first install with
-        'sudo mkdir -p /DATA/AppData/cloudcli && sudo chown -R 1000:1000
-        /DATA/AppData/cloudcli'. Per provider: Command Code and Claude Code
-        authenticate as soon as their login exists under
-        /DATA/AppData/cloudcli (created by the in-container /login flows or
-        API-key env fields). The optional /home/asiq bind mounts below only
-        matter when you want to reuse logins a HOST CLI created elsewhere —
-        delete any you do not want. Cursor: run 'docker exec -it
-        cloudcli-shared agent login' once inside the container and open the
-        printed browser URL (its auth is machine-bound). OpenCode is not
-        bundled. This variant and casaos-cloudcli.yml share the same
+        one folder. No host-user paths are hardcoded: bind mounts are
+        literal host paths and cannot auto-detect the logged-in user, so all
+        state stays username-independent under /DATA/AppData/cloudcli. The
+        container runs as uid 1000 so files can also be used by host CLIs
+        running as the same uid; create the folder once on first install
+        with 'sudo mkdir -p /DATA/AppData/cloudcli && sudo chown -R
+        1000:1000 /DATA/AppData/cloudcli'. Log in per provider with the
+        API-key env fields or one-time 'docker exec -it cloudcli-shared
+        <cli> /login'. Cursor additionally needs 'docker exec -it
+        cloudcli-shared agent login' (its auth is machine-bound). OpenCode
+        is not bundled. This variant and casaos-cloudcli.yml share the same
         /DATA/AppData/cloudcli state — run one or the other, not both.
-        Delete this app and re-import casaos-cloudcli.yml to return to the
-        plain setup.
