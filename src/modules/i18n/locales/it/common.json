@@ -159,6 +159,7 @@
       "newPlaceholder": "/percorso/nuova/area-di-lavoro",
       "existingHelp": "Percorso completo della directory dell'area di lavoro esistente",
       "newHelp": "Percorso completo della directory dell'area di lavoro",
+      "gitProvider": "Git Provider",
       "githubUrl": "URL GitHub (opzionale)",
       "githubPlaceholder": "https://github.com/utente/repository",
       "githubHelp": "Opzionale: fornisci un URL GitHub per clonare un repository",

@@ -159,6 +159,7 @@
       "newPlaceholder": "/path/to/new/workspace",
       "existingHelp": "기존 워크스페이스 디렉토리의 전체 경로",
       "newHelp": "워크스페이스 디렉토리의 전체 경로",
+      "gitProvider": "Git Provider",
       "githubUrl": "GitHub URL (선택사항)",
       "githubPlaceholder": "https://github.com/username/repository",
       "githubHelp": "선택사항: 저장소를 clone하려면 GitHub URL을 입력하세요",

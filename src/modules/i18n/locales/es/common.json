@@ -159,6 +159,7 @@
       "newPlaceholder": "/ruta/al/espacio/nuevo",
       "existingHelp": "Ruta completa al directorio de tu espacio de trabajo existente",
       "newHelp": "Ruta completa al directorio de tu espacio de trabajo",
+      "gitProvider": "Git Provider",
       "githubUrl": "URL de GitHub (opcional)",
       "githubPlaceholder": "https://github.com/usuario/repositorio",
       "githubHelp": "Opcional: proporciona una URL de GitHub para clonar un repositorio",

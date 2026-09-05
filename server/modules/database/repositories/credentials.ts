@@ -80,6 +80,21 @@ export const credentialsDb = {
     return row?.credential_value ?? null;
   },
 
+  /**
+   * Returns the raw value of one active credential by id, regardless of its
+   * type. Used where the caller already knows which row it wants (e.g. a
+   * "stored token" picker) rather than looking up by type.
+   */
+  getCredentialById(userId: number, credentialId: number): { credential_value: string } | null {
+    const db = getConnection();
+    const row = db
+      .prepare(
+        'SELECT credential_value FROM user_credentials WHERE id = ? AND user_id = ? AND is_active = 1'
+      )
+      .get(credentialId, userId) as { credential_value: string } | undefined;
+    return row ?? null;
+  },
+
   /** Permanently removes a credential. Returns true if a row was deleted. */
   deleteCredential(userId: number, credentialId: number): boolean {
     const db = getConnection();
