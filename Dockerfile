@@ -52,6 +52,12 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends git ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 
+# Browser Use downloads Chromium under $HOME/.cache/ms-playwright by
+# default, but HOME is /data (see above), which is bind-mounted at runtime
+# and would shadow anything baked in here at build time. Point it at /opt
+# instead so the baked-in browser survives regardless of the /data mount.
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+
 WORKDIR /app
 
 # Compiled artifacts + node_modules with native modules already built in the
@@ -71,14 +77,24 @@ COPY --from=build /app/electron ./electron
 # first-run DB writes.
 RUN mkdir -p /data
 
+# Bake Playwright + Chromium (npm package, OS-level deps, and the browser
+# binary) into the image now, while we're still root. Browser Use used to
+# install these on demand at runtime, but `playwright install-deps` needs
+# apt/root, which a non-root container user (see below) can never obtain on
+# its own — that left Browser permanently broken under uid 1000. Doing it
+# here means it's ready out of the box under every deployment.
+RUN npm install --no-save --no-package-lock playwright \
+  && npx playwright install-deps chromium \
+  && npx playwright install chromium
+
 # Some deployments (e.g. casaos-cloudcli-shared.yml) override the container
 # user to uid 1000 so provider dotdirs can be shared with host CLIs. The
 # node:22-bookworm-slim base image's built-in `node` user is uid/gid 1000, so
-# chown /app to it here: runtime features that npm-install into /app/
-# node_modules (e.g. the Browser Use Playwright/Chromium install) would
-# otherwise hit EACCES under that uid, since /app is created by root during
-# the build stages above.
-RUN chown -R node:node /app
+# chown /app and the baked-in browser cache to it here: runtime features
+# that write into /app/node_modules (e.g. a future manual Browser
+# reinstall) would otherwise hit EACCES under that uid, since both
+# directories are created by root during the build stages above.
+RUN chown -R node:node /app /opt/ms-playwright
 
 # Coding-agent CLIs so provider auth/session features work out of the box.
 # Installed globally as root; provider auth state persists under /data via
