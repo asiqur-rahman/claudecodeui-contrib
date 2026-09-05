@@ -65,10 +65,20 @@ COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/shared ./shared
 COPY --from=build /app/electron ./electron
 
-# Run as root so a bind-mounted /data (e.g. CasaOS /DATA/AppData/...) works
-# regardless of the host directory's ownership. The node user (uid 1000)
-# cannot write to a root-owned bind mount, which breaks first-run DB writes.
+# Run as root by default so a bind-mounted /data (e.g. CasaOS
+# /DATA/AppData/...) works regardless of the host directory's ownership. The
+# node user (uid 1000) cannot write to a root-owned bind mount, which breaks
+# first-run DB writes.
 RUN mkdir -p /data
+
+# Some deployments (e.g. casaos-cloudcli-shared.yml) override the container
+# user to uid 1000 so provider dotdirs can be shared with host CLIs. The
+# node:22-bookworm-slim base image's built-in `node` user is uid/gid 1000, so
+# chown /app to it here: runtime features that npm-install into /app/
+# node_modules (e.g. the Browser Use Playwright/Chromium install) would
+# otherwise hit EACCES under that uid, since /app is created by root during
+# the build stages above.
+RUN chown -R node:node /app
 
 # Coding-agent CLIs so provider auth/session features work out of the box.
 # Installed globally as root; provider auth state persists under /data via
