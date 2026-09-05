@@ -159,6 +159,7 @@
       "newPlaceholder": "/path/to/new/workspace",
       "existingHelp": "您現有工作區目錄的完整路徑",
       "newHelp": "工作區目錄的完整路徑",
+      "gitProvider": "Git Provider",
       "githubUrl": "GitHub URL（選填）",
       "githubPlaceholder": "https://github.com/username/repository",
       "githubHelp": "選填：提供 GitHub URL 以複製儲存庫",

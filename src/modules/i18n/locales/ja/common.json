@@ -159,6 +159,7 @@
       "newPlaceholder": "/path/to/new/workspace",
       "existingHelp": "既存のワークスペースディレクトリのフルパス",
       "newHelp": "ワークスペースディレクトリのフルパス",
+      "gitProvider": "Git Provider",
       "githubUrl": "GitHub URL（任意）",
       "githubPlaceholder": "https://github.com/username/repository",
       "githubHelp": "任意: リポジトリをクローンするためのGitHub URLを入力してください",

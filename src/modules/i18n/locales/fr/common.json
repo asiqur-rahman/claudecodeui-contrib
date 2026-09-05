@@ -159,6 +159,7 @@
       "newPlaceholder": "/chemin/vers/nouvel-espace",
       "existingHelp": "Chemin complet vers votre répertoire d'espace de travail existant",
       "newHelp": "Chemin complet vers votre répertoire d'espace de travail",
+      "gitProvider": "Git Provider",
       "githubUrl": "URL GitHub (optionnel)",
       "githubPlaceholder": "https://github.com/utilisateur/depot",
       "githubHelp": "Optionnel : fournissez une URL GitHub pour cloner un dépôt",

@@ -159,6 +159,7 @@
       "newPlaceholder": "/yeni/calisma-alani/yolu",
       "existingHelp": "Mevcut çalışma alanı dizinine giden tam yol",
       "newHelp": "Çalışma alanı dizinine giden tam yol",
+      "gitProvider": "Git Provider",
       "githubUrl": "GitHub URL'si (İsteğe Bağlı)",
       "githubPlaceholder": "https://github.com/kullanici/depo",
       "githubHelp": "İsteğe bağlı: bir depoyu klonlamak için GitHub URL'si gir",

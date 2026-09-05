@@ -4,14 +4,21 @@ import path from 'node:path';
 // cross-spawn: drop-in spawn with Windows .cmd/PATHEXT resolution.
 import spawn from 'cross-spawn';
 
-import { githubTokensDb } from '@/modules/database/index.js';
+import { credentialsDb } from '@/modules/database/index.js';
 import { createProject } from '@/modules/projects/services/project-management.service.js';
 import type { WorkspacePathValidationResult } from '@/shared/types.js';
-import { AppError, validateWorkspacePath } from '@/shared/utils.js';
+import {
+  AppError,
+  getNonGithubBasicAuthCredentials,
+  validateUrlMatchesProvider,
+  validateWorkspacePath,
+  type GitProvider,
+} from '@/shared/utils.js';
 
 type CloneProjectInput = {
   workspacePath: string;
   githubUrl: string;
+  gitProvider?: GitProvider;
   githubTokenId?: number | null;
   newGithubToken?: string | null;
   userId: number | string;
@@ -40,10 +47,10 @@ type CloneProjectDependencies = {
   ensureDirectory: (directoryPath: string) => Promise<void>;
   pathExists: (targetPath: string) => Promise<boolean>;
   removePath: (targetPath: string) => Promise<void>;
-  getGithubTokenById: (
-    tokenId: number,
+  getCredentialById: (
+    credentialId: number,
     userId: number,
-  ) => Promise<{ github_token: string } | null>;
+  ) => Promise<{ credential_value: string } | null>;
   spawnGitClone: (cloneUrl: string, clonePath: string) => GitCloneProcess;
   registerProject: (projectPath: string, customName: string) => Promise<{ project: Record<string, unknown> }>;
   logError: (message: string, error: unknown) => void;
@@ -117,14 +124,11 @@ const defaultDependencies: CloneProjectDependencies = {
   removePath: async (targetPath: string): Promise<void> => {
     await rm(targetPath, { recursive: true, force: true });
   },
-  getGithubTokenById: async (
-    tokenId: number,
+  getCredentialById: async (
+    credentialId: number,
     userId: number,
-  ): Promise<{ github_token: string } | null> => {
-    const tokenRow = githubTokensDb.getGithubTokenById(userId, tokenId) as
-      | { github_token: string }
-      | null;
-    return tokenRow;
+  ): Promise<{ credential_value: string } | null> => {
+    return credentialsDb.getCredentialById(userId, credentialId);
   },
   spawnGitClone: (cloneUrl: string, clonePath: string): GitCloneProcess =>
     spawn('git', ['clone', '--progress', '--', cloneUrl, clonePath], {
@@ -198,15 +202,15 @@ export async function startCloneProject(
       });
     }
 
-    const token = await dependencies.getGithubTokenById(input.githubTokenId, numericUserId);
-    if (!token) {
-      throw new AppError('GitHub token not found', {
+    const credential = await dependencies.getCredentialById(input.githubTokenId, numericUserId);
+    if (!credential) {
+      throw new AppError('Credential not found', {
         code: 'GITHUB_TOKEN_NOT_FOUND',
         statusCode: 404,
       });
     }
 
-    githubToken = token.github_token;
+    githubToken = credential.credential_value;
   } else if (input.newGithubToken && input.newGithubToken.trim().length > 0) {
     githubToken = input.newGithubToken.trim();
   }
@@ -225,16 +229,29 @@ export async function startCloneProject(
     );
   }
 
+  const gitProvider: GitProvider = input.gitProvider || 'github';
+
   let cloneUrl = normalizedGithubUrl;
-  if (githubToken) {
-    try {
-      const url = new URL(normalizedGithubUrl);
-      url.username = githubToken;
-      url.password = '';
+  try {
+    const url = new URL(normalizedGithubUrl);
+    validateUrlMatchesProvider(gitProvider, url.hostname);
+
+    if (githubToken) {
+      const providerCreds = getNonGithubBasicAuthCredentials(gitProvider, githubToken);
+      if (providerCreds) {
+        url.username = providerCreds.username;
+        url.password = providerCreds.password;
+      } else {
+        url.username = githubToken;
+        url.password = '';
+      }
       cloneUrl = url.toString();
-    } catch {
-      // SSH URLs cannot be represented by URL constructor and are used as-is.
     }
+  } catch (error) {
+    if (error instanceof AppError) {
+      throw error;
+    }
+    // SSH URLs cannot be represented by URL constructor and are used as-is.
   }
 
   handlers.onProgress(`Cloning into '${repoName}'...`);

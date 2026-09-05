@@ -15,7 +15,7 @@ function buildDependencies(overrides: Partial<NonNullable<TestDependencies>> = {
     ensureDirectory: async () => undefined,
     pathExists: async () => false,
     removePath: async () => undefined,
-    getGithubTokenById: async () => ({ github_token: 'token-value' }),
+    getCredentialById: async () => ({ credential_value: 'token-value' }),
     spawnGitClone: () => {
       throw new Error('spawnGitClone should be overridden in this test');
     },
@@ -125,7 +125,7 @@ test('startCloneProject rejects when selected github token does not exist', asyn
           onComplete: () => undefined,
         },
         buildDependencies({
-          getGithubTokenById: async () => null,
+          getCredentialById: async () => null,
         }),
       ),
     (error: unknown) => {
@@ -180,4 +180,118 @@ test('startCloneProject completes and emits complete payload when git exits succ
   };
   assert.equal(resolvedCompletePayload.message, 'Repository cloned successfully');
   assert.equal((resolvedCompletePayload.project.projectId as string) || '', 'project-1');
+});
+
+test('startCloneProject injects GitLab oauth2 credentials for a gitlab.com URL', async () => {
+  const gitProcess = createMockGitProcess();
+  let capturedCloneUrl = '';
+
+  const operation = await startCloneProject(
+    {
+      workspacePath: '/workspace/root',
+      githubUrl: 'https://gitlab.com/example/repo',
+      gitProvider: 'gitlab',
+      newGithubToken: 'glpat-secret',
+      userId: 1,
+    },
+    {
+      onProgress: () => undefined,
+      onComplete: () => undefined,
+    },
+    buildDependencies({
+      spawnGitClone: (cloneUrl) => {
+        capturedCloneUrl = cloneUrl;
+        return gitProcess as any;
+      },
+    }),
+  );
+
+  gitProcess.emit('close', 0);
+  await operation.waitForCompletion;
+
+  assert.ok(capturedCloneUrl.startsWith('https://oauth2:glpat-secret@gitlab.com/'));
+});
+
+test('startCloneProject injects Bitbucket x-token-auth credentials for a bitbucket.org URL', async () => {
+  const gitProcess = createMockGitProcess();
+  let capturedCloneUrl = '';
+
+  const operation = await startCloneProject(
+    {
+      workspacePath: '/workspace/root',
+      githubUrl: 'https://bitbucket.org/example/repo',
+      gitProvider: 'bitbucket',
+      newGithubToken: 'bb-secret',
+      userId: 1,
+    },
+    {
+      onProgress: () => undefined,
+      onComplete: () => undefined,
+    },
+    buildDependencies({
+      spawnGitClone: (cloneUrl) => {
+        capturedCloneUrl = cloneUrl;
+        return gitProcess as any;
+      },
+    }),
+  );
+
+  gitProcess.emit('close', 0);
+  await operation.waitForCompletion;
+
+  assert.ok(capturedCloneUrl.startsWith('https://x-token-auth:bb-secret@bitbucket.org/'));
+});
+
+test('startCloneProject rejects when the URL host does not match the selected provider', async () => {
+  await assert.rejects(
+    async () =>
+      startCloneProject(
+        {
+          workspacePath: '/workspace/root',
+          githubUrl: 'https://bitbucket.org/example/repo',
+          gitProvider: 'github',
+          userId: 1,
+        },
+        {
+          onProgress: () => undefined,
+          onComplete: () => undefined,
+        },
+        buildDependencies(),
+      ),
+    (error: unknown) => {
+      assert.ok(error instanceof AppError);
+      assert.equal(error.code, 'GIT_PROVIDER_HOST_MISMATCH');
+      return true;
+    },
+  );
+});
+
+test('startCloneProject skips host validation and uses generic auth for gitProvider "custom"', async () => {
+  const gitProcess = createMockGitProcess();
+  let capturedCloneUrl = '';
+
+  const operation = await startCloneProject(
+    {
+      workspacePath: '/workspace/root',
+      githubUrl: 'https://git.example.internal/example/repo',
+      gitProvider: 'custom',
+      newGithubToken: 'custom-secret',
+      userId: 1,
+    },
+    {
+      onProgress: () => undefined,
+      onComplete: () => undefined,
+    },
+    buildDependencies({
+      spawnGitClone: (cloneUrl) => {
+        capturedCloneUrl = cloneUrl;
+        return gitProcess as any;
+      },
+    }),
+  );
+
+  gitProcess.emit('close', 0);
+  await operation.waitForCompletion;
+
+  assert.ok(capturedCloneUrl.startsWith('https://custom-secret@git.example.internal/'));
 });
