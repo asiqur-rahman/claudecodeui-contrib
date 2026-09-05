@@ -20,8 +20,13 @@ services:
         published: "50081"
         protocol: tcp
     volumes:
+      # All CloudCLI + provider state lives under /DATA/AppData/cloudcli so
+      # CasaOS preserves everything (database, settings, chat history,
+      # assets, and per-provider .claude/.codex/.commandcode/.cursor state)
+      # across container recreations. The app's HOME is /data, so the
+      # bundled CLIs create their dotdirs here automatically.
       - type: bind
-        source: /DATA/AppData/cloudcli/data
+        source: /DATA/AppData/cloudcli
         target: /data
         bind:
           create_host_path: true
@@ -97,19 +102,17 @@ x-casaos:
       en_US: >-
         This is a personal fork build (asiqurrahman/cloudcli-ui), not the
         official siteboon/claudecodeui image. The image bundles the Claude
-        Code, OpenAI Codex and Command Code CLIs. Provider auth options are
-        (1) set ANTHROPIC_API_KEY or OPENAI_API_KEY in the env fields below
-        for instant Claude and Codex auth, or (2) leave them empty and run
-        one-time interactive logins inside the container, for example
-        'docker exec -it cloudcli claude /login',
-        'docker exec -it cloudcli codex /login', and
-        'docker exec -it cloudcli command-code /login'. Auth and all state
-        persist under the mounted /DATA/AppData/cloudcli/data directory.
-        Cursor and OpenCode are not bundled. To instead reuse the host
-        machine's existing claude / codex / command-code logins, import the
-        companion casaos-cloudcli-shared.yml (mounts the host dotdirs and
-        runs as your host uid). The production tag always points at the
-        latest build published by the fork's pipeline — pull again and
-        recreate the container to update. Back up the mounted data directory,
-        which holds the database, settings, chat history, assets, and
-        per-provider state.
+        Code, OpenAI Codex and Command Code CLIs. All state is preserved by
+        CasaOS under /DATA/AppData/cloudcli — the database, settings, chat
+        history, assets, and each provider's login state
+        (.claude/.codex/.commandcode/.cursor) survive container updates and
+        recreations. Provider auth options are (1) set ANTHROPIC_API_KEY or
+        OPENAI_API_KEY in the env fields below for instant Claude and Codex
+        auth, or (2) leave them empty and run one-time interactive logins
+        inside the container, for example 'docker exec -it cloudcli claude
+        /login', 'docker exec -it cloudcli codex /login', and
+        'docker exec -it cloudcli command-code /login'. Cursor and OpenCode
+        are not bundled. The production tag always points at the latest
+        build published by the fork's pipeline — pull again and recreate the
+        container to update. Back up /DATA/AppData/cloudcli to keep all
+        settings, logins and history.
