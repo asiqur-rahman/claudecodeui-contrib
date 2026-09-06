@@ -24,6 +24,7 @@ export function useGitCredentialsSection({ provider, confirmDeleteText }: UseGit
 
   const [credentials, setCredentials] = useState<GitCredentialItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const [showNewForm, setShowNewForm] = useState(false);
   const [newName, setNewName] = useState('');
@@ -34,11 +35,18 @@ export function useGitCredentialsSection({ provider, confirmDeleteText }: UseGit
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
+      setLoadError(null);
       const response = await api.settings.credentials(credentialType);
       const payload = await response.json() as GitCredentialsResponse;
+
+      if (!response.ok) {
+        setLoadError(getApiError(payload, `Failed to load ${provider} credentials`));
+        return;
+      }
+
       setCredentials(payload.credentials || []);
     } catch (error) {
-      console.error(`Error fetching ${provider} credentials:`, error);
+      setLoadError(error instanceof Error ? error.message : `Failed to load ${provider} credentials`);
     } finally {
       setLoading(false);
     }
@@ -129,6 +137,7 @@ export function useGitCredentialsSection({ provider, confirmDeleteText }: UseGit
   return {
     credentials,
     loading,
+    loadError,
     showNewForm,
     setShowNewForm,
     newName,

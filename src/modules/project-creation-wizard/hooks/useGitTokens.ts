@@ -23,7 +23,17 @@ export const useGitTokens = ({
   const loadedForTypeRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!shouldLoad || loadedForTypeRef.current === credentialType) {
+    if (!shouldLoad) {
+      if (loadedForTypeRef.current !== null) {
+        loadedForTypeRef.current = null;
+        setTokens([]);
+        setLoadError(null);
+        setLoading(false);
+      }
+      return;
+    }
+
+    if (loadedForTypeRef.current === credentialType) {
       return;
     }
 

@@ -9,6 +9,7 @@ type GitCredentialsSectionProvider = 'github' | 'gitlab' | 'bitbucket';
 type GitCredentialsSectionProps = {
   provider: GitCredentialsSectionProvider;
   credentials: GitCredentialItem[];
+  loadError: string | null;
   showNewForm: boolean;
   showTokenPlainText: boolean;
   newName: string;
@@ -32,17 +33,18 @@ const PROVIDER_ICON = {
   bitbucket: Key,
 } as const;
 
-/** Token-creation page per provider; GitLab/GitHub links are stable, Bitbucket's has changed over time and may need re-checking against their current docs. */
+/** Token-creation page per provider. Bitbucket Cloud retired app passwords in favor of Atlassian account API tokens. */
 const HOW_TO_CREATE_URL: Record<GitCredentialsSectionProvider, string> = {
   github: 'https://github.com/settings/tokens',
   gitlab: 'https://gitlab.com/-/user_settings/personal_access_tokens',
-  bitbucket: 'https://bitbucket.org/account/settings/app-passwords/',
+  bitbucket: 'https://id.atlassian.com/manage-profile/security/api-tokens',
 };
 
 /** Rendered by CredentialsSettingsTab (once per provider) to list, create and delete stored git credentials. */
 export default function GitCredentialsSection({
   provider,
   credentials,
+  loadError,
   showNewForm,
   showTokenPlainText,
   newName,
@@ -126,8 +128,12 @@ export default function GitCredentialsSection({
         </div>
       )}
 
+      {loadError && (
+        <p className="mb-3 text-sm text-red-600 dark:text-red-400">{loadError}</p>
+      )}
+
       <div className="space-y-2">
-        {credentials.length === 0 ? (
+        {!loadError && credentials.length === 0 ? (
           <p className="text-sm italic text-muted-foreground">{t(`apiKeys.${provider}.empty`)}</p>
         ) : (
           credentials.map((credential) => (

@@ -9,11 +9,20 @@ import { createProject } from '@/modules/projects/services/project-management.se
 import type { WorkspacePathValidationResult } from '@/shared/types.js';
 import {
   AppError,
+  CREDENTIAL_TYPE_BY_PROVIDER,
   getNonGithubBasicAuthCredentials,
   validateUrlMatchesProvider,
   validateWorkspacePath,
   type GitProvider,
 } from '@/shared/utils.js';
+
+const SCP_LIKE_SSH_PATTERN = /^(?:ssh:\/\/)?git@([^:/]+)[:/]/;
+
+/** Extracts the host from an SCP-style SSH URL (`git@host:owner/repo.git`), which `new URL()` rejects outright. */
+function extractScpLikeSshHost(url: string): string | null {
+  const match = SCP_LIKE_SSH_PATTERN.exec(url.trim());
+  return match ? match[1] : null;
+}
 
 type CloneProjectInput = {
   workspacePath: string;
@@ -50,6 +59,7 @@ type CloneProjectDependencies = {
   getCredentialById: (
     credentialId: number,
     userId: number,
+    credentialType: string,
   ) => Promise<{ credential_value: string } | null>;
   spawnGitClone: (cloneUrl: string, clonePath: string) => GitCloneProcess;
   registerProject: (projectPath: string, customName: string) => Promise<{ project: Record<string, unknown> }>;
@@ -127,8 +137,9 @@ const defaultDependencies: CloneProjectDependencies = {
   getCredentialById: async (
     credentialId: number,
     userId: number,
+    credentialType: string,
   ): Promise<{ credential_value: string } | null> => {
-    return credentialsDb.getCredentialById(userId, credentialId);
+    return credentialsDb.getCredentialById(userId, credentialId, credentialType);
   },
   spawnGitClone: (cloneUrl: string, clonePath: string): GitCloneProcess =>
     spawn('git', ['clone', '--progress', '--', cloneUrl, clonePath], {
@@ -191,8 +202,18 @@ export async function startCloneProject(
   const absolutePath = pathValidation.resolvedPath;
   await dependencies.ensureDirectory(absolutePath);
 
+  const gitProvider: GitProvider = input.gitProvider || 'github';
+  const credentialType = gitProvider === 'custom' ? null : CREDENTIAL_TYPE_BY_PROVIDER[gitProvider];
+
   let githubToken: string | null = null;
   if (typeof input.githubTokenId === 'number') {
+    if (!credentialType) {
+      throw new AppError('Stored credentials are not supported for Custom Git; paste a token for this clone instead.', {
+        code: 'CUSTOM_PROVIDER_NO_STORED_CREDENTIAL',
+        statusCode: 400,
+      });
+    }
+
     const numericUserId =
       typeof input.userId === 'number' ? input.userId : Number.parseInt(String(input.userId), 10);
     if (Number.isNaN(numericUserId)) {
@@ -202,7 +223,7 @@ export async function startCloneProject(
       });
     }
 
-    const credential = await dependencies.getCredentialById(input.githubTokenId, numericUserId);
+    const credential = await dependencies.getCredentialById(input.githubTokenId, numericUserId, credentialType);
     if (!credential) {
       throw new AppError('Credential not found', {
         code: 'GITHUB_TOKEN_NOT_FOUND',
@@ -229,11 +250,15 @@ export async function startCloneProject(
     );
   }
 
-  const gitProvider: GitProvider = input.gitProvider || 'github';
-
   let cloneUrl = normalizedGithubUrl;
   try {
     const url = new URL(normalizedGithubUrl);
+    if (url.protocol !== 'https:') {
+      throw new AppError('Repository URL must use HTTPS', {
+        code: 'INVALID_GITHUB_URL',
+        statusCode: 400,
+      });
+    }
     validateUrlMatchesProvider(gitProvider, url.hostname);
 
     if (githubToken) {
@@ -251,7 +276,17 @@ export async function startCloneProject(
     if (error instanceof AppError) {
       throw error;
     }
-    // SSH URLs cannot be represented by URL constructor and are used as-is.
+
+    // new URL() rejects SCP-style SSH syntax (git@host:owner/repo.git) outright;
+    // validate the host it names directly instead of skipping validation.
+    const sshHost = extractScpLikeSshHost(normalizedGithubUrl);
+    if (!sshHost) {
+      throw new AppError('Invalid githubUrl', {
+        code: 'INVALID_GITHUB_URL',
+        statusCode: 400,
+      });
+    }
+    validateUrlMatchesProvider(gitProvider, sshHost);
   }
 
   handlers.onProgress(`Cloning into '${repoName}'...`);

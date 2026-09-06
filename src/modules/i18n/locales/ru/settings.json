@@ -292,16 +292,16 @@
     },
     "bitbucket": {
       "title": "Bitbucket Tokens",
-      "description": "Add Bitbucket app passwords or access tokens to clone private repositories via the external API.",
-      "descriptionAlt": "Add Bitbucket app passwords or access tokens to clone private repositories. You can also pass tokens directly in API requests without storing them.",
+      "description": "Add Bitbucket API tokens to clone private repositories via the external API.",
+      "descriptionAlt": "Add Bitbucket API tokens to clone private repositories. You can also pass tokens directly in API requests without storing them.",
       "addButton": "Add Token",
       "form": {
         "namePlaceholder": "Token Name (e.g., Personal Repos)",
-        "tokenPlaceholder": "Bitbucket app password or access token",
+        "tokenPlaceholder": "Bitbucket API token",
         "descriptionPlaceholder": "Description (optional)",
         "addButton": "Add Token",
         "cancelButton": "Cancel",
-        "howToCreate": "How to create a Bitbucket app password →"
+        "howToCreate": "How to create a Bitbucket API token →"
       },
       "empty": "No Bitbucket tokens added yet.",
       "added": "Added:",
