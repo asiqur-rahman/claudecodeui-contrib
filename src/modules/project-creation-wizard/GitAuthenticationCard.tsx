@@ -17,11 +17,11 @@ type GitAuthenticationCardProps = {
   onNewGithubTokenChange: (tokenValue: string) => void;
 };
 
-/** New-token placeholder per provider; 'custom' and 'bitbucket' avoid a fake-looking fixed prefix since neither host has one worth guessing at. */
+/** New-token placeholder per provider; 'custom' avoids a fake-looking fixed prefix since it has no host worth guessing at. */
 const NEW_TOKEN_PLACEHOLDER: Record<GitProvider, string> = {
   github: 'ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
   gitlab: 'glpat-xxxxxxxxxxxxxxxxxxxx',
-  bitbucket: 'App password or access token',
+  bitbucket: 'Bitbucket API token',
   custom: 'Personal access token',
 };
 

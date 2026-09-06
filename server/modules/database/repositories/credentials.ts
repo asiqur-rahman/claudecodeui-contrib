@@ -81,17 +81,23 @@ export const credentialsDb = {
   },
 
   /**
-   * Returns the raw value of one active credential by id, regardless of its
-   * type. Used where the caller already knows which row it wants (e.g. a
-   * "stored token" picker) rather than looking up by type.
+   * Returns the raw value of one active credential by id, scoped to a
+   * specific type. The caller supplies the expected type (e.g. the
+   * `<provider>_token` implied by a clone request's selected provider) so a
+   * credential ID for one provider/type can't be paired with a different
+   * one and have its secret sent to an unintended host.
    */
-  getCredentialById(userId: number, credentialId: number): { credential_value: string } | null {
+  getCredentialById(
+    userId: number,
+    credentialId: number,
+    credentialType: string
+  ): { credential_value: string } | null {
     const db = getConnection();
     const row = db
       .prepare(
-        'SELECT credential_value FROM user_credentials WHERE id = ? AND user_id = ? AND is_active = 1'
+        'SELECT credential_value FROM user_credentials WHERE id = ? AND user_id = ? AND credential_type = ? AND is_active = 1'
       )
-      .get(credentialId, userId) as { credential_value: string } | undefined;
+      .get(credentialId, userId, credentialType) as { credential_value: string } | undefined;
     return row ?? null;
   },
 

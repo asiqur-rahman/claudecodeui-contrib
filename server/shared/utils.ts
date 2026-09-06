@@ -1213,6 +1213,19 @@ export const PROVIDER_HOSTS: Record<'github' | 'gitlab' | 'bitbucket', string> =
 };
 
 /**
+ * The `user_credentials.credential_type` value stored for each provider's
+ * tokens. 'custom' is intentionally absent: there's no single sensible
+ * bucket for an unknown host, so stored/reusable credentials aren't offered
+ * for it at all (see getNonGithubBasicAuthCredentials and the wizard/settings
+ * UI, which both skip 'custom' the same way).
+ */
+export const CREDENTIAL_TYPE_BY_PROVIDER: Record<'github' | 'gitlab' | 'bitbucket', string> = {
+  github: 'github_token',
+  gitlab: 'gitlab_token',
+  bitbucket: 'bitbucket_token',
+};
+
+/**
  * HTTPS Basic-auth username/password shape each provider expects for a
  * PAT-style credential. Returns null for 'github' and 'custom' so callers
  * keep using their own already-working generic convention (token as
@@ -1225,8 +1238,11 @@ export function getNonGithubBasicAuthCredentials(
   switch (provider) {
     case 'gitlab':
       return { username: 'oauth2', password: token };
+    // Bitbucket Cloud retired app passwords in favor of API tokens, which
+    // authenticate under a different username than the older access-token
+    // scheme (x-token-auth).
     case 'bitbucket':
-      return { username: 'x-token-auth', password: token };
+      return { username: 'x-bitbucket-api-token-auth', password: token };
     default:
       return null;
   }

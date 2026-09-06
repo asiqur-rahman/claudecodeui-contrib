@@ -72,6 +72,7 @@ export default function CredentialsSettingsTab() {
             key={provider}
             provider={provider}
             credentials={section.credentials}
+            loadError={section.loadError}
             showNewForm={section.showNewForm}
             showTokenPlainText={section.showTokenPlainText}
             newName={section.newName}
