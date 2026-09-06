@@ -6,6 +6,7 @@ import express from 'express';
 import type { ProviderRunFunction } from '@/shared/types.js';
 
 import {
+  AppError,
   getNonGithubBasicAuthCredentials,
   normalizeProjectPath,
   validateUrlMatchesProvider,
@@ -1305,7 +1306,8 @@ export function createAgentRouter(dependencies: AgentRouterDependencies): expres
           writer.end();
         }
       } else if (!res.headersSent) {
-        res.status(500).json({
+        const statusCode = error instanceof AppError ? error.statusCode : 500;
+        res.status(statusCode).json({
           success: false,
           error: error.message
         });
