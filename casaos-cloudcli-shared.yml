@@ -20,6 +20,10 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - ANTHROPIC_AUTH_TOKEN=${ANTHROPIC_AUTH_TOKEN}
+      # Optional. Requires this password to open the web UI (single shared
+      # password, no username). Leave empty for no login. Has no effect on
+      # an install that already has its own username+password account.
+      - APP_PASSWORD=${APP_PASSWORD}
     ports:
       - target: 3001
         published: "50082"
@@ -73,6 +77,10 @@ services:
         - container: ANTHROPIC_AUTH_TOKEN
           description:
             en_US: Optional. Long-lived Anthropic OAuth token.
+        - container: APP_PASSWORD
+          type: password
+          description:
+            en_US: Optional. Set a password to require it on the web UI's login page. Leave empty for no login.
       volumes:
         - container: /data
           description:
