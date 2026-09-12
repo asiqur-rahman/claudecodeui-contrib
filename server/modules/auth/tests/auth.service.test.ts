@@ -274,3 +274,100 @@ test('disableSharedPassword flips the mode back to open and bumps the epoch', ()
   assert.equal(appConfig.get('auth_mode'), 'none');
   assert.equal(appConfig.get('auth_security_epoch'), '2');
 });
+
+test('applyEnvironmentPassword does nothing for an account-mode installation', async () => {
+  const appConfig = createInMemoryAppConfig({ auth_mode: 'account' });
+  let createCalled = false;
+  const service = createAuthService(createDependencies({
+    appConfig,
+    users: {
+      hasUsers: () => true,
+      createUser: () => { createCalled = true; throw new Error('unused'); },
+      getUserByUsername: () => undefined,
+      updateLastLogin: () => undefined,
+      setPasswordHash: () => undefined,
+    },
+  }));
+
+  await service.applyEnvironmentPassword('env-password');
+
+  assert.equal(createCalled, false);
+  assert.equal(appConfig.get('auth_mode'), 'account');
+});
+
+test('applyEnvironmentPassword does nothing when no password is provided', async () => {
+  const appConfig = createInMemoryAppConfig({ auth_mode: 'none' });
+  const service = createAuthService(createDependencies({ appConfig }));
+
+  await service.applyEnvironmentPassword(undefined);
+
+  assert.equal(appConfig.get('auth_mode'), 'none');
+  assert.equal(appConfig.get('auth_security_epoch'), null);
+});
+
+test('applyEnvironmentPassword provisions the hidden account and enables shared-password mode on first sync', async () => {
+  const appConfig = createInMemoryAppConfig({ auth_mode: 'none' });
+  let created: { username: string; passwordHash: string } | undefined;
+  const service = createAuthService(createDependencies({
+    appConfig,
+    users: {
+      hasUsers: () => false,
+      createUser: (username, passwordHash) => {
+        created = { username, passwordHash };
+        return { id: 1, username, password_hash: passwordHash };
+      },
+      getUserByUsername: () => undefined,
+      updateLastLogin: () => undefined,
+      setPasswordHash: () => undefined,
+    },
+    hashPassword: async (password) => `hashed:${password}`,
+  }));
+
+  await service.applyEnvironmentPassword('env-password');
+
+  assert.equal(created?.username, '__app_shared_account__');
+  assert.equal(created?.passwordHash, 'hashed:env-password');
+  assert.equal(appConfig.get('auth_mode'), 'shared-password');
+  assert.equal(appConfig.get('auth_security_epoch'), '1');
+});
+
+test('applyEnvironmentPassword is a no-op when the password already matches (no epoch bump)', async () => {
+  const appConfig = createInMemoryAppConfig({ auth_mode: 'shared-password', auth_security_epoch: '3' });
+  let setPasswordHashCalled = false;
+  const service = createAuthService(createDependencies({
+    appConfig,
+    users: {
+      hasUsers: () => true,
+      createUser: () => { throw new Error('unused'); },
+      getUserByUsername: () => ({ id: 1, username: '__app_shared_account__', password_hash: 'existing-hash' }),
+      updateLastLogin: () => undefined,
+      setPasswordHash: () => { setPasswordHashCalled = true; },
+    },
+    comparePassword: async (password, hash) => password === 'env-password' && hash === 'existing-hash',
+  }));
+
+  await service.applyEnvironmentPassword('env-password');
+
+  assert.equal(setPasswordHashCalled, false);
+  assert.equal(appConfig.get('auth_security_epoch'), '3');
+});
+
+test('applyEnvironmentPassword rotates the hash and bumps the epoch when the env password changed', async () => {
+  const appConfig = createInMemoryAppConfig({ auth_mode: 'shared-password', auth_security_epoch: '3' });
+  const service = createAuthService(createDependencies({
+    appConfig,
+    users: {
+      hasUsers: () => true,
+      createUser: () => { throw new Error('unused'); },
+      getUserByUsername: () => ({ id: 1, username: '__app_shared_account__', password_hash: 'old-hash' }),
+      updateLastLogin: () => undefined,
+      setPasswordHash: () => undefined,
+    },
+    comparePassword: async () => false,
+    hashPassword: async (password) => `hashed:${password}`,
+  }));
+
+  await service.applyEnvironmentPassword('new-env-password');
+
+  assert.equal(appConfig.get('auth_security_epoch'), '4');
+});

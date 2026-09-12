@@ -1,5 +1,7 @@
 // authRoutes: used by the server entrypoint to mount public authentication endpoints.
 export { authRoutes } from './auth.module.js';
+// applyEnvironmentPassword: used by the server entrypoint at boot to sync APP_PASSWORD into shared-password mode.
+export { applyEnvironmentPassword } from './auth.module.js';
 
 // authenticateToken: used by the server entrypoint to protect authenticated API modules.
 export { authenticateToken } from './auth.middleware.js';

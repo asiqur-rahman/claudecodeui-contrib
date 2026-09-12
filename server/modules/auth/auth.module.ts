@@ -41,3 +41,10 @@ const authService = createAuthService({
 
 /** Auth router assembled for the server entrypoint. */
 export const authRoutes = createAuthRouter(authService, authenticateToken);
+
+/**
+ * Called by the server entrypoint once at boot, after the schema is ready.
+ * Lets a deployment (e.g. CasaOS's APP_PASSWORD env field) declare the
+ * shared password as config instead of requiring a first-run Settings visit.
+ */
+export const applyEnvironmentPassword = () => authService.applyEnvironmentPassword(process.env.APP_PASSWORD);
