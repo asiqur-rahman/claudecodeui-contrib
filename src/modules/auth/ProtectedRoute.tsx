@@ -6,14 +6,15 @@ import { Onboarding } from '@/modules/onboarding';
 import AuthLoadingScreen from '@/modules/auth/AuthLoadingScreen';
 import LoginForm from '@/modules/auth/LoginForm';
 import SetupForm from '@/modules/auth/SetupForm';
+import UnlockScreen from '@/modules/auth/UnlockScreen';
 
 type ProtectedRouteProps = {
   children: ReactNode;
 };
 
-/** Used by App to gate the routed application behind setup, login and onboarding. */
+/** Used by App to gate the routed application behind setup/login/unlock and onboarding. */
 export default function ProtectedRoute({ children }: ProtectedRouteProps) {
-  const { user, isLoading, needsSetup, hasCompletedOnboarding, refreshOnboardingStatus } = useAuth();
+  const { user, isLoading, needsSetup, hasCompletedOnboarding, authMode, refreshOnboardingStatus } = useAuth();
 
   if (isLoading) {
     return <AuthLoadingScreen />;
@@ -27,12 +28,16 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
     return <>{children}</>;
   }
 
-  if (needsSetup) {
-    return <SetupForm />;
-  }
+  if (authMode === 'account') {
+    if (needsSetup) {
+      return <SetupForm />;
+    }
 
-  if (!user) {
-    return <LoginForm />;
+    if (!user) {
+      return <LoginForm />;
+    }
+  } else if (authMode === 'shared-password' && !user) {
+    return <UnlockScreen />;
   }
 
   if (!hasCompletedOnboarding) {

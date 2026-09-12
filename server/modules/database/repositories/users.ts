@@ -99,6 +99,12 @@ export const userDb = {
       .get() as UserPublicRow | undefined;
   },
 
+  /** Replaces a user's password hash (used to set/rotate the shared app password). */
+  setPasswordHash(userId: number, passwordHash: string): void {
+    const db = getConnection();
+    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(passwordHash, userId);
+  },
+
   /** Stores the user's preferred git name and email. */
   updateGitConfig(
     userId: number,
