@@ -818,7 +818,7 @@ export function createAgentRouter(dependencies: AgentRouterDependencies): expres
    * Input Validations (400 Bad Request):
    *   - Either githubUrl OR projectPath must be provided (not neither)
    *   - message must be non-empty string
-   *   - provider must be 'claude', 'cursor', 'codex', or 'opencode'
+   *   - provider must be 'claude', 'cursor', 'codex', 'opencode', or 'command-code'
    *   - createBranch/createPR requires githubUrl OR projectPath (not neither)
    *   - branchName must pass Git naming rules (if provided)
    *
@@ -1011,8 +1011,8 @@ export function createAgentRouter(dependencies: AgentRouterDependencies): expres
         });
       }
 
-      const codexModels = (await providerModelsService.getProviderModels('codex')).models;
-      const opencodeModels = (await providerModelsService.getProviderModels('opencode')).models;
+      const codexModels = await providerModelsService.getProviderModels('codex');
+      const opencodeModels = await providerModelsService.getProviderModels('opencode');
 
       // Start the appropriate session
       if (provider === 'claude') {
