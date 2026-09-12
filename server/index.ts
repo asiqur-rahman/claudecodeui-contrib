@@ -21,6 +21,7 @@ import { getConnectableHost } from '../shared/networkHosts.js';
 
 import { createGitModule } from './modules/git/index.js';
 import {
+    applyEnvironmentPassword,
     authenticateToken,
     authenticateWebSocket,
     authRoutes,
@@ -331,6 +332,11 @@ async function startServer() {
     try {
         // Initialize authentication database
         await initializeDatabase();
+
+        // Let a deployment declare the shared password via APP_PASSWORD
+        // (e.g. CasaOS's install-time env field) instead of requiring a
+        // first-run visit to Settings. No-op for account-mode installs.
+        await applyEnvironmentPassword();
 
         // Configure Web Push (VAPID keys)
         configureWebPush();

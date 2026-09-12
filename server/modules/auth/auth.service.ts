@@ -321,5 +321,43 @@ export function createAuthService(dependencies: AuthDependencies) {
 
       return { success: true };
     },
+
+    /**
+     * Declaratively syncs the shared password from an env var (e.g. an
+     * `APP_PASSWORD` set by a docker/CasaOS deployment) at server boot.
+     * A no-op for account-mode installs (never overrides an existing
+     * account) and idempotent when the password hasn't changed - only
+     * bumps the epoch (revoking existing sessions) when it actually did.
+     */
+    async applyEnvironmentPassword(passwordInput: unknown) {
+      const password = typeof passwordInput === 'string' ? passwordInput : '';
+      if (!password || authMode() === 'account') {
+        return;
+      }
+
+      let changed = false;
+      const existingUser = dependencies.users.getUserByUsername(SHARED_ACCOUNT_USERNAME);
+      if (existingUser) {
+        const matchesCurrent = await dependencies.comparePassword(password, existingUser.password_hash);
+        if (!matchesCurrent) {
+          const passwordHash = await dependencies.hashPassword(password);
+          dependencies.users.setPasswordHash(numericUserId(existingUser.id), passwordHash);
+          changed = true;
+        }
+      } else {
+        const passwordHash = await dependencies.hashPassword(password);
+        dependencies.users.createUser(SHARED_ACCOUNT_USERNAME, passwordHash);
+        changed = true;
+      }
+
+      if (authMode() !== 'shared-password') {
+        dependencies.appConfig.set('auth_mode', 'shared-password');
+        changed = true;
+      }
+
+      if (changed) {
+        bumpEpoch();
+      }
+    },
   };
 }
