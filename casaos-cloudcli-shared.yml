@@ -4,9 +4,9 @@ services:
     container_name: cloudcli-shared
     hostname: cloudcli
     image: asiqurrahman/cloudcli-ui:production
-    # Run as uid 1000 (the typical first host user) so the files under
-    # /DATA/AppData/cloudcli can also be used by host CLIs that run as that
-    # user. If your host user is a different uid, adjust this line.
+    # Run as the host user (uid/gid 1000 = 'asiq' on the VPS) so writes into
+    # the mounted host credential dirs keep the same ownership as host CLIs.
+    # If your host user is a different uid, adjust this line (check: id -u).
     user: "1000:1000"
     restart: unless-stopped
     cpu_shares: 90
@@ -16,7 +16,7 @@ services:
           memory: 2048M
     environment:
       - TZ=Asia/Dhaka
-      # Optional API keys: leave empty to log in interactively instead.
+      # Optional API keys: leave empty to use the mounted host logins.
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - ANTHROPIC_AUTH_TOKEN=${ANTHROPIC_AUTH_TOKEN}
@@ -24,31 +24,64 @@ services:
       # password, no username). Leave empty for no login. Has no effect on
       # an install that already has its own username+password account.
       - APP_PASSWORD=${APP_PASSWORD}
+      # Host Cursor `agent` binary (mounted at /host-bin below).
+      - PATH=/host-bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     ports:
       - target: 3001
         published: "50082"
         protocol: tcp
     volumes:
-      # All state (app + every provider) lives under /DATA/AppData/cloudcli
-      # so CasaOS preserves it across container recreations. Each provider
-      # dotdir is a first-class folder here, kept visible on the host under
-      # /DATA/AppData/cloudcli/.claude, ./.codex, ./.commandcode, ./.cursor.
+      # App-only state (database, settings, chat history, assets). Provider
+      # logins come from the host mounts below, which shadow /data/.claude etc.
       #
-      # No host-user paths are mounted (e.g. /home/<user>/.claude) because
-      # Docker bind sources are literal host paths and cannot auto-detect the
-      # logged-in user — CasaOS runs containers as root, so any ${HOME}
-      # interpolation would resolve to /root and break. State is therefore
-      # username-independent: the bundled CLIs create their dotdirs under
-      # /data (HOME=/data) automatically.
-      #
-      # CasaOS creates /DATA/AppData/cloudcli as root, but this container
-      # runs as uid 1000 so the same files can be shared with host CLIs that
-      # run as the first (uid-1000) user. Create it once and chown:
+      # REQUIRED before first start (uid 1000 cannot write a root-owned dir):
       #   sudo mkdir -p /DATA/AppData/cloudcli
       #   sudo chown -R 1000:1000 /DATA/AppData/cloudcli
       - type: bind
         source: /DATA/AppData/cloudcli
         target: /data
+        bind:
+          create_host_path: true
+      # Host provider credentials (this is what makes the shared variant
+      # shared). HOME=/data, so these paths are exactly where the bundled
+      # CLIs read auth. Replace every '/home/asiq' with your Linux username
+      # if it is not 'asiq' (Docker cannot auto-detect $HOME — CasaOS runs
+      # as root, so ${HOME} would resolve to /root).
+      - type: bind
+        source: /home/asiq/.claude
+        target: /data/.claude
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /home/asiq/.claude.json
+        target: /data/.claude.json
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /home/asiq/.commandcode
+        target: /data/.commandcode
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /home/asiq/.codex
+        target: /data/.codex
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /home/asiq/.cursor
+        target: /data/.cursor
+        bind:
+          create_host_path: true
+      # Cursor CLI binary lives under ~/.local (agent -> versions/...). Mount
+      # both so the symlink resolves inside the container. Delete if unused.
+      - type: bind
+        source: /home/asiq/.local/bin
+        target: /host-bin
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /home/asiq/.local/share
+        target: /home/asiq/.local/share
         bind:
           create_host_path: true
     networks:
@@ -70,13 +103,13 @@ services:
             en_US: Timezone
         - container: ANTHROPIC_API_KEY
           description:
-            en_US: Optional. Overrides host login for Claude/Command Code. Leave empty to use the shared host dotdirs.
+            en_US: Optional. Overrides the mounted host Claude/Command Code login. Leave empty to use /home/<user>/.claude and /.commandcode.
         - container: OPENAI_API_KEY
           description:
-            en_US: Optional. Overrides host login for Codex. Leave empty to use the shared host dotdirs.
+            en_US: Optional. Overrides the mounted host Codex login. Leave empty to use /home/<user>/.codex.
         - container: ANTHROPIC_AUTH_TOKEN
           description:
-            en_US: Optional. Long-lived Anthropic OAuth token.
+            en_US: Optional. Long-lived Anthropic OAuth token (preferred over an API key for Claude Code).
         - container: APP_PASSWORD
           type: password
           description:
@@ -84,7 +117,22 @@ services:
       volumes:
         - container: /data
           description:
-            en_US: All CloudCLI + provider state under /DATA/AppData/cloudcli (preserved by CasaOS).
+            en_US: App database/settings/history under /DATA/AppData/cloudcli (must be owned by uid 1000).
+        - container: /data/.claude
+          description:
+            en_US: Host ~/.claude credentials (change /home/asiq in the compose if needed)
+        - container: /data/.commandcode
+          description:
+            en_US: Host ~/.commandcode credentials
+        - container: /data/.codex
+          description:
+            en_US: Host ~/.codex credentials
+        - container: /data/.cursor
+          description:
+            en_US: Host ~/.cursor config (auth is machine-bound; usually still needs agent login)
+        - container: /host-bin
+          description:
+            en_US: Host ~/.local/bin (Cursor agent CLI). Delete if you do not use Cursor.
       ports:
         - container: "3001"
           description:
@@ -105,9 +153,9 @@ x-casaos:
   author: Md. Asiqur Rahman Khan
   category: Developer Tools
   description:
-    en_US: Web dashboard for coding-agent CLIs. All state is preserved by
-      CasaOS under /DATA/AppData/cloudcli (app + provider dotdirs together),
-      running as uid 1000 so host CLIs can use the same files.
+    en_US: Web dashboard for coding-agent CLIs that reuses the host machine's
+      existing Claude / Codex / Command Code / Cursor credential dirs via bind
+      mounts. App state stays under /DATA/AppData/cloudcli; runs as uid 1000.
   developer: asiqur-rahman
   icon: https://raw.githubusercontent.com/asiqur-rahman/claudecodeui-contrib/production/public/logo.svg
   id: com.asiqurrahman.cloudcli-shared
@@ -118,25 +166,24 @@ x-casaos:
   scheme: http
   store_app_id: cloudcli-shared
   tagline:
-    en_US: CloudCLI UI (uid 1000 state under /DATA/AppData/cloudcli)
+    en_US: CloudCLI UI (shared host provider credentials)
   title:
     en_US: CloudCLI (Shared)
   tips:
     before_install:
       en_US: >-
-        All CloudCLI and provider state is preserved by CasaOS under
-        /DATA/AppData/cloudcli — the database, settings, chat history,
-        assets, and each provider's login state (.claude/.codex/
-        .commandcode/.cursor) survive container updates and recreations as
-        one folder. No host-user paths are hardcoded: bind mounts are
-        literal host paths and cannot auto-detect the logged-in user, so all
-        state stays username-independent under /DATA/AppData/cloudcli. The
-        container runs as uid 1000 so files can also be used by host CLIs
-        running as the same uid; create the folder once on first install
-        with 'sudo mkdir -p /DATA/AppData/cloudcli && sudo chown -R
-        1000:1000 /DATA/AppData/cloudcli'. Log in per provider with the
-        API-key env fields or one-time 'docker exec -it cloudcli-shared
-        <cli> /login'. Cursor additionally needs 'docker exec -it
-        cloudcli-shared agent login' (its auth is machine-bound). OpenCode
-        is not bundled. This variant and casaos-cloudcli.yml share the same
-        /DATA/AppData/cloudcli state — run one or the other, not both.
+        This variant reuses HOST provider credentials. Paths default to
+        /home/asiq/.claude, .claude.json, .commandcode, .codex, and .cursor —
+        replace 'asiq' with your Linux username everywhere in the file if
+        needed (and set user: to that account's uid:gid). REQUIRED before
+        install: 'sudo mkdir -p /DATA/AppData/cloudcli && sudo chown -R
+        1000:1000 /DATA/AppData/cloudcli' so the app database can write.
+        Leave API-key env fields empty to use the mounted host logins; set
+        them only to override. Optional APP_PASSWORD sets a shared web-UI
+        password (leave empty for no login). Claude/Codex/Command Code pick
+        up host auth from those dirs. Cursor mounts host ~/.cursor plus
+        ~/.local/bin and ~/.local/share for the agent binary, but Cursor
+        auth is machine-bound — run 'docker exec -it cloudcli-shared agent
+        login' once if the UI still shows disconnected. OpenCode is not
+        bundled. Do not run this together with casaos-cloudcli.yml (same
+        AppData path and network name). amd64 only.
