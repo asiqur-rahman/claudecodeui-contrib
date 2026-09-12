@@ -33,8 +33,11 @@ type AuthSessionPayload = {
   message?: string;
 };
 
+type AuthMode = 'account' | 'shared-password' | 'none';
+
 type AuthStatusPayload = {
   needsSetup?: boolean;
+  authMode?: AuthMode;
 };
 
 type AuthUserPayload = {
@@ -57,10 +60,14 @@ type AuthContextValue = {
   needsSetup: boolean;
   hasCompletedOnboarding: boolean;
   error: string | null;
+  authMode: AuthMode;
   login: (username: string, password: string) => Promise<AuthActionResult>;
   register: (username: string, password: string) => Promise<AuthActionResult>;
   logout: () => void;
   refreshOnboardingStatus: () => Promise<void>;
+  unlockWithPassword: (password: string) => Promise<AuthActionResult>;
+  enableSecurity: (password: string, currentPassword?: string) => Promise<AuthActionResult>;
+  disableSecurity: () => Promise<AuthActionResult>;
 };
 
 type AuthProviderProps = {
@@ -113,6 +120,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [needsSetup, setNeedsSetup] = useState(false);
   const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Defaults to the strictest mode while status is still loading (mirrors the
+  // server's fail-closed default for a missing/unreadable auth_mode value).
+  const [authMode, setAuthMode] = useState<AuthMode>('account');
 
   const setSession = useCallback((nextUser: AuthUser, nextToken: string) => {
     setUser(nextUser);
@@ -212,6 +222,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
       const statusResponse = await api.auth.status();
       const statusPayload = await parseJsonSafely<AuthStatusPayload>(statusResponse);
+      const mode: AuthMode = statusPayload?.authMode === 'shared-password' || statusPayload?.authMode === 'none'
+        ? statusPayload.authMode
+        : 'account';
+      setAuthMode(mode);
 
       if (statusPayload?.needsSetup) {
         setNeedsSetup(true);
@@ -220,7 +234,20 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
       setNeedsSetup(false);
 
-      if (!token) {
+      let activeToken = token;
+
+      // Open installs never show a login screen - the client silently mints
+      // its own session the first time it learns protection is off.
+      if (mode === 'none' && !activeToken) {
+        const sessionResponse = await api.auth.session();
+        const sessionPayload = await parseJsonSafely<AuthSessionPayload>(sessionResponse);
+        if (sessionResponse.ok && sessionPayload?.token && sessionPayload.user) {
+          setSession(sessionPayload.user, sessionPayload.token);
+          activeToken = sessionPayload.token;
+        }
+      }
+
+      if (!activeToken) {
         return;
       }
 
@@ -244,7 +271,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     } finally {
       setIsLoading(false);
     }
-  }, [checkOnboardingStatus, clearSession, t, token]);
+  }, [checkOnboardingStatus, clearSession, setSession, t, token]);
 
   useEffect(() => {
     if (IS_PLATFORM) {
@@ -351,6 +378,89 @@ export function AuthProvider({ children }: AuthProviderProps) {
     clearSession();
   }, [clearSession]);
 
+  const unlockWithPassword = useCallback<AuthContextValue['unlockWithPassword']>(
+    async (password) => {
+      try {
+        setError(null);
+        const response = await api.auth.unlock(password);
+        const payload = await parseJsonSafely<AuthSessionPayload>(response);
+
+        if (!response.ok || !payload?.token || !payload.user) {
+          const message = resolveApiErrorMessage(payload, t(AUTH_ERROR_MESSAGES.loginFailed));
+          setError(message);
+          return { success: false, error: message };
+        }
+
+        setSession(payload.user, payload.token);
+        await checkOnboardingStatus();
+        return { success: true };
+      } catch (caughtError) {
+        console.error('Unlock error:', caughtError);
+        setError(t(AUTH_ERROR_MESSAGES.networkError));
+        return { success: false, error: t(AUTH_ERROR_MESSAGES.networkError) };
+      }
+    },
+    [checkOnboardingStatus, setSession, t],
+  );
+
+  const enableSecurity = useCallback<AuthContextValue['enableSecurity']>(
+    async (password, currentPassword) => {
+      try {
+        setError(null);
+        const response = await api.auth.enableSecurity(password, currentPassword);
+        const payload = await parseJsonSafely<AuthSessionPayload>(response);
+
+        if (!response.ok || !payload?.token || !payload.user) {
+          const message = resolveApiErrorMessage(payload, t(AUTH_ERROR_MESSAGES.registrationFailed));
+          setError(message);
+          return { success: false, error: message };
+        }
+
+        setSession(payload.user, payload.token);
+        setAuthMode('shared-password');
+        return { success: true };
+      } catch (caughtError) {
+        console.error('Enable security error:', caughtError);
+        setError(t(AUTH_ERROR_MESSAGES.networkError));
+        return { success: false, error: t(AUTH_ERROR_MESSAGES.networkError) };
+      }
+    },
+    [setSession, t],
+  );
+
+  const disableSecurity = useCallback<AuthContextValue['disableSecurity']>(
+    async () => {
+      try {
+        setError(null);
+        const response = await api.auth.disableSecurity();
+        const payload = await parseJsonSafely<ApiErrorPayload>(response);
+
+        if (!response.ok) {
+          const message = resolveApiErrorMessage(payload, t(AUTH_ERROR_MESSAGES.networkError));
+          setError(message);
+          return { success: false, error: message };
+        }
+
+        setAuthMode('none');
+        // The token just held is now revoked server-side (the epoch moved);
+        // silently mint a fresh open-mode session so the app keeps working.
+        const sessionResponse = await api.auth.session();
+        const sessionPayload = await parseJsonSafely<AuthSessionPayload>(sessionResponse);
+        if (sessionResponse.ok && sessionPayload?.token && sessionPayload.user) {
+          setSession(sessionPayload.user, sessionPayload.token);
+        } else {
+          clearSession();
+        }
+        return { success: true };
+      } catch (caughtError) {
+        console.error('Disable security error:', caughtError);
+        setError(t(AUTH_ERROR_MESSAGES.networkError));
+        return { success: false, error: t(AUTH_ERROR_MESSAGES.networkError) };
+      }
+    },
+    [clearSession, setSession, t],
+  );
+
   const contextValue = useMemo<AuthContextValue>(
     () => ({
       user,
@@ -359,12 +469,19 @@ export function AuthProvider({ children }: AuthProviderProps) {
       needsSetup,
       hasCompletedOnboarding,
       error,
+      authMode,
       login,
       register,
       logout,
       refreshOnboardingStatus,
+      unlockWithPassword,
+      enableSecurity,
+      disableSecurity,
     }),
     [
+      authMode,
+      disableSecurity,
+      enableSecurity,
       error,
       hasCompletedOnboarding,
       isLoading,
@@ -374,6 +491,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       refreshOnboardingStatus,
       register,
       token,
+      unlockWithPassword,
       user,
     ],
   );

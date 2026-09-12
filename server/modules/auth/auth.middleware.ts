@@ -8,6 +8,19 @@ import { userDb, appConfigDb } from '../database/index.js';
 // Use env var if set, otherwise auto-generate a unique secret per installation
 const JWT_SECRET = process.env.JWT_SECRET || appConfigDb.getOrCreateJwtSecret();
 
+// Legacy account-mode installs are never epoch-checked, so a missing/unreadable
+// auth_mode value (appConfigDb.get() swallows errors and returns null) must be
+// read as 'account' to fail closed rather than accidentally opening up.
+const currentAuthMode = () => appConfigDb.get('auth_mode') ?? 'account';
+const currentSecurityEpoch = () => appConfigDb.get('auth_security_epoch') ?? '0';
+
+const isStaleEpoch = (decoded) => {
+  if (currentAuthMode() === 'account') {
+    return false;
+  }
+  return String(decoded.epoch ?? '0') !== currentSecurityEpoch();
+};
+
 // Optional API key middleware
 const validateApiKey = (req, res, next) => {
   // Skip API key validation if not configured
@@ -69,17 +82,28 @@ const authenticateToken = async (req, res, next) => {
       });
     }
 
+    // A token minted before protection was enabled/disabled/changed carries a
+    // stale epoch and must not keep working past that change.
+    if (isStaleEpoch(decoded)) {
+      res.setHeader('X-Auth-Error', 'session-expired');
+      return res.status(401).json({
+        error: 'Session expired. Please log in again.',
+        code: 'AUTH_TOKEN_EXPIRED',
+      });
+    }
+
     // Auto-refresh: if token is past halfway through its lifetime, issue a new one
     if (decoded.exp && decoded.iat) {
       const now = Math.floor(Date.now() / 1000);
       const halfLife = (decoded.exp - decoded.iat) / 2;
       if (now > decoded.iat + halfLife) {
-        const newToken = generateToken(user);
+        const newToken = generateToken(user, decoded.epoch);
         res.setHeader('X-Refreshed-Token', newToken);
       }
     }
 
     req.user = user;
+    req.tokenEpoch = decoded.epoch;
     next();
   } catch (error) {
     if (error instanceof jwt.TokenExpiredError) {
@@ -102,12 +126,14 @@ const authenticateToken = async (req, res, next) => {
   }
 };
 
-// Generate JWT token
-const generateToken = (user) => {
+// Generate JWT token. `epoch` is only embedded when passed (account-mode
+// callers never pass one), so legacy tokens carry no epoch claim at all.
+const generateToken = (user, epoch) => {
   return jwt.sign(
     {
       userId: user.id,
-      username: user.username
+      username: user.username,
+      ...(epoch === undefined ? {} : { epoch })
     },
     JWT_SECRET,
     { expiresIn: '7d' }
@@ -140,6 +166,9 @@ const authenticateWebSocket = (token) => {
     // Verify user actually exists in database (matches REST authenticateToken behavior)
     const user = userDb.getUserById(decoded.userId);
     if (!user) {
+      return null;
+    }
+    if (isStaleEpoch(decoded)) {
       return null;
     }
     return { userId: user.id, username: user.username };

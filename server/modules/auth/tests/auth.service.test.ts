@@ -7,6 +7,16 @@ import { createAuthService } from '../auth.service.js';
 
 type AuthDependencies = Parameters<typeof createAuthService>[0];
 
+function createInMemoryAppConfig(initial: Record<string, string> = {}): AuthDependencies['appConfig'] {
+  const store = new Map(Object.entries(initial));
+  return {
+    get: (key) => store.get(key) ?? null,
+    set: (key, value) => {
+      store.set(key, value);
+    },
+  };
+}
+
 function createDependencies(overrides: Partial<AuthDependencies> = {}): AuthDependencies {
   return {
     users: {
@@ -14,7 +24,9 @@ function createDependencies(overrides: Partial<AuthDependencies> = {}): AuthDepe
       createUser: (username, passwordHash) => ({ id: 1, username, password_hash: passwordHash }),
       getUserByUsername: () => undefined,
       updateLastLogin: () => undefined,
+      setPasswordHash: () => undefined,
     },
+    appConfig: createInMemoryAppConfig(),
     transaction: {
       begin: () => undefined,
       commit: () => undefined,
@@ -47,6 +59,7 @@ test('register hashes credentials and commits through injected dependencies', as
       },
       getUserByUsername: () => undefined,
       updateLastLogin: (userId) => operations.push(`login:${userId}`),
+      setPasswordHash: () => undefined,
     },
   }));
 
@@ -64,6 +77,7 @@ test('login rejects an invalid password without issuing a token', async () => {
       createUser: () => { throw new Error('unused'); },
       getUserByUsername: () => ({ id: 1, username: 'alice', password_hash: 'hash' }),
       updateLastLogin: () => undefined,
+      setPasswordHash: () => undefined,
     },
     comparePassword: async () => false,
     generateToken: () => {
@@ -92,4 +106,171 @@ test('refreshSession issues a replacement token for the authenticated user', () 
 
   assert.deepEqual(result, { token: 'replacement-token' });
   assert.deepEqual(tokenUser, { id: 7, username: 'alice' });
+});
+
+test('refreshSession carries the caller\'s token epoch forward unchanged', () => {
+  let tokenEpoch: string | undefined;
+  const service = createAuthService(createDependencies({
+    generateToken: (_user, epoch) => {
+      tokenEpoch = epoch;
+      return 'replacement-token';
+    },
+  }));
+
+  service.refreshSession({ id: 7, username: 'alice' }, '3');
+
+  assert.equal(tokenEpoch, '3');
+});
+
+test('createOpenSession refuses when the installation is not in open mode', async () => {
+  const service = createAuthService(createDependencies({
+    appConfig: createInMemoryAppConfig({ auth_mode: 'account' }),
+  }));
+
+  await assert.rejects(
+    service.createOpenSession(),
+    (error: unknown) => error instanceof AppError && error.code === 'AUTH_SECURITY_NOT_OPEN',
+  );
+});
+
+test('createOpenSession provisions the hidden account once and reuses it afterwards', async () => {
+  const created: string[] = [];
+  let existingUser: { id: number; username: string; password_hash: string } | undefined;
+  const service = createAuthService(createDependencies({
+    appConfig: createInMemoryAppConfig({ auth_mode: 'none' }),
+    users: {
+      hasUsers: () => Boolean(existingUser),
+      createUser: (username, passwordHash) => {
+        created.push(username);
+        existingUser = { id: 1, username, password_hash: passwordHash };
+        return existingUser;
+      },
+      getUserByUsername: (username) => (existingUser?.username === username ? existingUser : undefined),
+      updateLastLogin: () => undefined,
+      setPasswordHash: () => undefined,
+    },
+  }));
+
+  const first = await service.createOpenSession();
+  const second = await service.createOpenSession();
+
+  assert.equal(first.success, true);
+  assert.equal(second.success, true);
+  assert.deepEqual(created, ['__app_shared_account__']);
+});
+
+test('unlockWithSharedPassword rejects an incorrect password', async () => {
+  const service = createAuthService(createDependencies({
+    appConfig: createInMemoryAppConfig({ auth_mode: 'shared-password' }),
+    users: {
+      hasUsers: () => true,
+      createUser: () => { throw new Error('unused'); },
+      getUserByUsername: () => ({ id: 1, username: '__app_shared_account__', password_hash: 'hash' }),
+      updateLastLogin: () => undefined,
+      setPasswordHash: () => undefined,
+    },
+    comparePassword: async () => false,
+  }));
+
+  await assert.rejects(
+    service.unlockWithSharedPassword('wrong'),
+    (error: unknown) => error instanceof AppError && error.code === 'AUTH_INVALID_CREDENTIALS',
+  );
+});
+
+test('unlockWithSharedPassword issues a token on a correct password', async () => {
+  const service = createAuthService(createDependencies({
+    appConfig: createInMemoryAppConfig({ auth_mode: 'shared-password' }),
+    users: {
+      hasUsers: () => true,
+      createUser: () => { throw new Error('unused'); },
+      getUserByUsername: () => ({ id: 1, username: '__app_shared_account__', password_hash: 'hash' }),
+      updateLastLogin: () => undefined,
+      setPasswordHash: () => undefined,
+    },
+    comparePassword: async () => true,
+    generateToken: () => 'unlocked-token',
+  }));
+
+  const result = await service.unlockWithSharedPassword('correct');
+
+  assert.equal(result.token, 'unlocked-token');
+});
+
+test('enableSharedPassword refuses to touch an account-mode installation', async () => {
+  const service = createAuthService(createDependencies({
+    appConfig: createInMemoryAppConfig({ auth_mode: 'account' }),
+  }));
+
+  await assert.rejects(
+    service.enableSharedPassword('newpassword', undefined),
+    (error: unknown) => error instanceof AppError && error.code === 'AUTH_SECURITY_ACCOUNT_MODE',
+  );
+});
+
+test('enableSharedPassword provisions the hidden account and bumps the epoch on first enable', async () => {
+  const appConfig = createInMemoryAppConfig({ auth_mode: 'none' });
+  const service = createAuthService(createDependencies({
+    appConfig,
+    users: {
+      hasUsers: () => false,
+      createUser: (username, passwordHash) => ({ id: 1, username, password_hash: passwordHash }),
+      getUserByUsername: () => undefined,
+      updateLastLogin: () => undefined,
+      setPasswordHash: () => undefined,
+    },
+  }));
+
+  const result = await service.enableSharedPassword('newpassword', undefined);
+
+  assert.equal(result.success, true);
+  assert.equal(appConfig.get('auth_mode'), 'shared-password');
+  assert.equal(appConfig.get('auth_security_epoch'), '1');
+});
+
+test('enableSharedPassword requires the correct current password to rotate an existing one', async () => {
+  const appConfig = createInMemoryAppConfig({ auth_mode: 'shared-password', auth_security_epoch: '1' });
+  const existingUser = { id: 1, username: '__app_shared_account__', password_hash: 'old-hash' };
+  const service = createAuthService(createDependencies({
+    appConfig,
+    users: {
+      hasUsers: () => true,
+      createUser: () => { throw new Error('unused'); },
+      getUserByUsername: () => existingUser,
+      updateLastLogin: () => undefined,
+      setPasswordHash: () => undefined,
+    },
+    comparePassword: async (password) => password === 'correct-current',
+  }));
+
+  await assert.rejects(
+    service.enableSharedPassword('newpassword', 'wrong-current'),
+    (error: unknown) => error instanceof AppError && error.code === 'AUTH_SECURITY_CURRENT_PASSWORD_INVALID',
+  );
+
+  const result = await service.enableSharedPassword('newpassword', 'correct-current');
+  assert.equal(result.success, true);
+  assert.equal(appConfig.get('auth_security_epoch'), '2');
+});
+
+test('disableSharedPassword refuses unless shared-password mode is active', () => {
+  const service = createAuthService(createDependencies({
+    appConfig: createInMemoryAppConfig({ auth_mode: 'none' }),
+  }));
+
+  assert.throws(
+    () => service.disableSharedPassword(),
+    (error: unknown) => error instanceof AppError && error.code === 'AUTH_SECURITY_NOT_ACTIVE',
+  );
+});
+
+test('disableSharedPassword flips the mode back to open and bumps the epoch', () => {
+  const appConfig = createInMemoryAppConfig({ auth_mode: 'shared-password', auth_security_epoch: '1' });
+  const service = createAuthService(createDependencies({ appConfig }));
+
+  const result = service.disableSharedPassword();
+
+  assert.equal(result.success, true);
+  assert.equal(appConfig.get('auth_mode'), 'none');
+  assert.equal(appConfig.get('auth_security_epoch'), '2');
 });
