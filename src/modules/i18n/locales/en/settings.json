@@ -112,7 +112,34 @@
     "browser": "Browser",
     "notifications": "Notifications",
     "plugins": "Plugins",
+    "security": "Security",
     "about": "About"
+  },
+  "security": {
+    "sectionTitle": "Password Protection",
+    "sectionDescription": "Lock this installation behind a single shared password.",
+    "accountModeNote": "This installation uses account-based login. Password protection is managed through your account, not here.",
+    "enableLabel": "Password protection",
+    "enableDescription": "When on, anyone opening this app must enter the password below.",
+    "enableAriaLabel": "Toggle password protection",
+    "newPasswordPlaceholder": "New password",
+    "confirmPasswordPlaceholder": "Confirm password",
+    "currentPasswordPlaceholder": "Current password",
+    "enableSubmit": "Turn on",
+    "enableSaving": "Turning on...",
+    "cancel": "Cancel",
+    "changePasswordTitle": "Change password",
+    "changePasswordSubmit": "Update password",
+    "changePasswordSaving": "Updating...",
+    "changePasswordSuccess": "Password updated.",
+    "disableWarning": "Anyone with access to this app will no longer need a password.",
+    "disableConfirm": "Turn off",
+    "disableSaving": "Turning off...",
+    "errors": {
+      "passwordTooShort": "Password must be at least 6 characters.",
+      "passwordMismatch": "Passwords do not match.",
+      "currentPasswordRequired": "Enter your current password."
+    }
   },
   "notifications": {
     "title": "Notifications",

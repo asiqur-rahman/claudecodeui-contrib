@@ -3,7 +3,7 @@ import type { RequestHandler } from 'express';
 
 import type { createAuthService } from './auth.service.js';
 
-type AuthenticatedRequest = express.Request & { user?: unknown };
+type AuthenticatedRequest = express.Request & { user?: unknown; tokenEpoch?: string };
 
 /**
  * Creates the Auth transport adapter. Handlers only parse request data and
@@ -46,11 +46,46 @@ export function createAuthRouter(
   });
 
   router.post('/refresh', authenticateToken, (req, res) => {
-    res.json(service.refreshSession((req as AuthenticatedRequest).user));
+    const authedReq = req as AuthenticatedRequest;
+    res.json(service.refreshSession(authedReq.user, authedReq.tokenEpoch));
   });
 
   router.post('/logout', authenticateToken, (_req, res) => {
     res.json(service.logout());
+  });
+
+  router.post('/session', async (_req, res, next) => {
+    try {
+      res.json(await service.createOpenSession());
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post('/unlock', async (req, res, next) => {
+    try {
+      const body = req.body as { password?: unknown };
+      res.json(await service.unlockWithSharedPassword(body.password));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post('/security/enable', authenticateToken, async (req, res, next) => {
+    try {
+      const body = req.body as { password?: unknown; currentPassword?: unknown };
+      res.json(await service.enableSharedPassword(body.password, body.currentPassword));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post('/security/disable', authenticateToken, (_req, res, next) => {
+    try {
+      res.json(service.disableSharedPassword());
+    } catch (error) {
+      next(error);
+    }
   });
 
   return router;

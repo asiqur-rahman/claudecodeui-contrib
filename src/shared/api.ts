@@ -170,8 +170,17 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password }),
     }),
+    session: () => fetch('/api/auth/session', { method: 'POST' }),
+    unlock: (password: string) => fetch('/api/auth/unlock', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    }),
     refresh: () => post('/api/auth/refresh'),
     user: () => get('/api/auth/user'),
+    enableSecurity: (password: string, currentPassword?: string) =>
+      post('/api/auth/security/enable', { password, currentPassword }),
+    disableSecurity: () => post('/api/auth/security/disable'),
   },
 
   // Protected endpoints
