@@ -20,6 +20,35 @@ import {
 const PROVIDER = 'command-code';
 
 /**
+ * Flattens a Command Code tool payload into display text.
+ *
+ * The CLI hands over tool output as a content-part array — on the live
+ * `tool_completed` event and inside a transcript's `tool_result` part alike —
+ * while a couple of shapes pass a plain string. Parts are concatenated without
+ * a separator because a shell's output arrives as contiguous chunks; anything
+ * that is neither shape is serialized so an unexpected payload stays readable
+ * instead of silently rendering as nothing.
+ */
+const readContentText = (value: unknown): string => {
+  if (typeof value === 'string') {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .map((part) => {
+        const record = readObjectRecord(part);
+        return typeof record?.text === 'string' ? record.text : '';
+      })
+      .filter(Boolean)
+      .join('');
+  }
+
+  const record = readObjectRecord(value);
+  return record ? JSON.stringify(record) : '';
+};
+
+/**
  * Reads a Command Code JSONL transcript and returns the active branch as a
  * linear, oldest-first list of message rows.
  *
@@ -193,9 +222,14 @@ const normalizeCommandCodeRow = (raw: AnyRecord, sessionId: string | null): Norm
           transcriptAnchorId: rowId,
         }));
       } else if (partType === 'tool_result' || partType === 'toolResult') {
-        const toolId = typeof record.toolCallId === 'string'
-          ? record.toolCallId
-          : typeof record.id === 'string' ? record.id : `${rowId}_tool`;
+        // A persisted result names its call as `tool_use_id`; the other two
+        // spellings are tolerated so a row from an older transcript still pairs
+        // with its call instead of hanging on a synthetic id.
+        const toolId = typeof record.tool_use_id === 'string'
+          ? record.tool_use_id
+          : typeof record.toolCallId === 'string'
+            ? record.toolCallId
+            : typeof record.id === 'string' ? record.id : `${rowId}_tool`;
         normalized.push(createNormalizedMessage({
           id: `${rowId}_${toolId}_result`,
           sessionId,
@@ -203,9 +237,7 @@ const normalizeCommandCodeRow = (raw: AnyRecord, sessionId: string | null): Norm
           provider: PROVIDER,
           kind: 'tool_result',
           toolId,
-          content: typeof record.content === 'string'
-            ? record.content
-            : typeof record.output === 'string' ? record.output : '',
+          content: readContentText(record.content ?? record.output),
           isError: Boolean(record.isError),
           transcriptAnchorId: rowId,
         }));
@@ -260,6 +292,12 @@ export class CommandCodeSessionsProvider implements IProviderSessions {
    * result line (`{"type":"result",...}`). Result lines are handled by the
    * runtime (terminal + token usage); event frames that carry text/tool
    * content are normalized here.
+   *
+   * Tool work arrives as several frames per call — `tool_queued` (input),
+   * `tool_running` (description), `tool_update` (partial output) and one of
+   * `tool_completed`/`tool_errored`/`tool_denied` (outcome) — so the row and its
+   * result are drawn from the frames that carry new information, and the rest
+   * are skipped to keep one call one row.
    */
   normalizeMessage(rawMessage: unknown, sessionId: string | null): NormalizedMessage[] {
     const raw = readObjectRecord(rawMessage);
@@ -304,13 +342,31 @@ export class CommandCodeSessionsProvider implements IProviderSessions {
         }
       }
 
-      if (eventType === 'tool_running' || eventType === 'tool_use') {
+      // Every tool event names the call it belongs to, so the row and its
+      // result are keyed by the same tool id.
+      const toolId = typeof event.toolCallId === 'string'
+        ? event.toolCallId
+        : (typeof event.id === 'string' ? event.id : eventId);
+      const toolResultMessage = (content: string, isError = false) => createNormalizedMessage({
+        id: `${eventId}_result`,
+        sessionId,
+        timestamp,
+        provider: PROVIDER,
+        kind: 'tool_result',
+        toolId,
+        content,
+        isError,
+      });
+
+      // A queued call is the only event that carries the tool's input, so the
+      // row is drawn from it. `tool_running` fires later — after the permission
+      // check, with a description but no input — so drawing it too would render
+      // the same call twice, and an earlier attempt to read input off it is what
+      // made every Command Code tool render as an empty `{}`.
+      if (eventType === 'tool_queued' || eventType === 'tool_use') {
         const toolName = typeof event.toolName === 'string'
           ? event.toolName
           : (typeof event.name === 'string' ? event.name : 'Unknown');
-        const toolId = typeof event.toolCallId === 'string'
-          ? event.toolCallId
-          : (typeof event.id === 'string' ? event.id : eventId);
         const toolInput = event.input ?? event.arguments ?? {};
         return [createNormalizedMessage({
           id: eventId,
@@ -322,6 +378,34 @@ export class CommandCodeSessionsProvider implements IProviderSessions {
           toolInput,
           toolId,
         })];
+      }
+
+      // The call's output, so its row can expand while the run is still live
+      // rather than only once the transcript is next loaded. The payload is a
+      // content-part array; a failed call reports `error` instead.
+      if (eventType === 'tool_completed' || eventType === 'tool_errored') {
+        return [toolResultMessage(
+          readContentText(eventType === 'tool_errored' ? event.error : event.result),
+          eventType === 'tool_errored',
+        )];
+      }
+
+      // A call can also end without ever running — a permission denial, which is
+      // the expected outcome of print mode without `--yolo`, or a mod's
+      // pre-tool hook blocking it. Neither is followed by a terminal tool event,
+      // so the row drawn when the call was queued would spin forever without a
+      // result of its own.
+      if (eventType === 'tool_denied' || eventType === 'tool_hook_blocked') {
+        const blockedByHook = typeof event.hookOutput === 'string' && event.hookOutput.trim()
+          ? event.hookOutput
+          : null;
+        return [toolResultMessage(
+          blockedByHook
+            ?? (eventType === 'tool_denied'
+              ? 'Tool call denied by the permission settings.'
+              : 'Tool call blocked by a pre-tool hook.'),
+          true,
+        )];
       }
 
       // Unknown/forward-compatible event types are ignored.

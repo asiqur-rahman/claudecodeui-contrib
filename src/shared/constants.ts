@@ -78,6 +78,22 @@ export const DEFAULT_EFFORT_VALUE = 'default';
 
 // ---------------------------
 
+//----------------- TRANSCRIPT COMMAND ROWS ------------
+
+/**
+ * Tool names the transcript draws as a command row: Claude's `Bash` and Command
+ * Code's `shell_command`, which both take a `{ command, description }` input.
+ *
+ * Such a row shows the command and expands to reveal the output it produced, so
+ * consumers use this set twice over — to route the tool to that row, and to
+ * suppress the separate result section that would otherwise be drawn beneath
+ * it. Each provider keeps its own tool name because a transcript stays faithful
+ * to the CLI that produced it.
+ */
+export const COMMAND_ROW_TOOL_NAMES = new Set(['Bash', 'shell_command']);
+
+// ---------------------------
+
 //----------------- FILE UPLOAD LIMITS ------------
 
 /** Largest single file the upload endpoint accepts, in megabytes. Source of truth for the two derived limits below. */

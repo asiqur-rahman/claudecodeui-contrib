@@ -792,6 +792,14 @@ export const TOOL_CONFIGS: Record<string, ToolDisplayConfig> = {
 };
 
 /**
+ * Command Code runs shell commands through `shell_command`, which takes the same
+ * `{ command, description }` input as Bash and is drawn and hidden by the same
+ * rules. Point it at Bash's entry rather than restating the whole color scheme,
+ * so the two can never drift apart.
+ */
+TOOL_CONFIGS.shell_command = TOOL_CONFIGS.Bash;
+
+/**
  * Get configuration for a tool, with fallback to default
  */
 export function getToolConfig(toolName: string): ToolDisplayConfig {
