@@ -111,9 +111,12 @@ const PROVIDER_CAPABILITIES: Record<LLMProvider, ProviderCapabilities> = {
     // resolveCommandCodePermissionArgs in the Command Code runtime adapter.
     permissionModes: ['default', 'acceptEdits', 'bypassPermissions', 'plan'],
     defaultPermissionMode: 'default',
-    // Command Code's headless `-p` mode has no image/file attachment flag.
-    supportsImages: false,
-    supportsFiles: false,
+    // Headless `-p` has no attachment flag, so attachments ride along as the
+    // `<images_input>`/`<files_input>` path lists the agent reads with its own
+    // tools, staged into the OS temp dir because Command Code confines reads to
+    // the workspace. See stageAttachmentsInTempDir.
+    supportsImages: true,
+    supportsFiles: true,
     supportsAbort: true,
     // Headless runs have no interactive prompt channel — permission is set
     // pre-launch via --permission-mode / --yolo.

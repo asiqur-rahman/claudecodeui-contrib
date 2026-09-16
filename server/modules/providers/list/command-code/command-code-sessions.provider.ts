@@ -3,6 +3,12 @@ import readline from 'node:readline';
 
 import { sessionsDb } from '@/modules/database/index.js';
 import type { IProviderSessions } from '@/shared/interfaces.js';
+import {
+  parseFilesInputTag,
+  parseImagesInputTag,
+  resolveStagedAttachmentPath,
+} from '@/shared/image-attachments.js';
+import type { ParsedImageAttachment } from '@/shared/image-attachments.js';
 import { prepareTranscriptMessages } from '@/shared/message-unification.js';
 import type {
   AnyRecord,
@@ -18,6 +24,40 @@ import {
 } from '@/shared/utils.js';
 
 const PROVIDER = 'command-code';
+
+/** Re-anchors a recorded attachment on the stored file the run was handed a copy of. */
+const toStoredAttachment = (attachment: ParsedImageAttachment): ParsedImageAttachment => ({
+  ...attachment,
+  path: resolveStagedAttachmentPath(attachment.path),
+});
+
+/**
+ * Splits the attachment blocks out of a persisted user prompt.
+ *
+ * A turn sent with attachments is launched with the `<images_input>` /
+ * `<files_input>` path lists appended, so the prompt the CLI recorded carries
+ * them. They are stripped for display and the references surfaced as
+ * attachments, mapped back from the temp copies the run was actually given to
+ * the stored files the chat's asset route serves.
+ */
+const readUserAttachments = (content: string): {
+  text: string;
+  images?: ParsedImageAttachment[];
+  files?: ParsedImageAttachment[];
+} => {
+  const parsedImages = parseImagesInputTag(content);
+  const parsedFiles = parseFilesInputTag(parsedImages.text);
+
+  return {
+    text: parsedFiles.text,
+    images: parsedImages.attachments.length > 0
+      ? parsedImages.attachments.map(toStoredAttachment)
+      : undefined,
+    files: parsedFiles.attachments.length > 0
+      ? parsedFiles.attachments.map(toStoredAttachment)
+      : undefined,
+  };
+};
 
 /**
  * Flattens a Command Code tool payload into display text.
@@ -246,7 +286,10 @@ const normalizeCommandCodeRow = (raw: AnyRecord, sessionId: string | null): Norm
   }
 
   if (role === 'user') {
-    if (content) {
+    const userTurn = readUserAttachments(content);
+    // An attachment-only turn records no prose but still has a bubble to draw,
+    // so the row is kept whenever any part of the turn survived.
+    if (userTurn.text || userTurn.images || userTurn.files) {
       normalized.push(createNormalizedMessage({
         id: `${rowId}_user`,
         sessionId,
@@ -254,7 +297,9 @@ const normalizeCommandCodeRow = (raw: AnyRecord, sessionId: string | null): Norm
         provider: PROVIDER,
         kind: 'text',
         role: 'user',
-        content,
+        content: userTurn.text,
+        images: userTurn.images,
+        files: userTurn.files,
         // Stable row identity for future edit/fork anchors (Command Code rows
         // carry stable ids).
         transcriptAnchorId: rowId,

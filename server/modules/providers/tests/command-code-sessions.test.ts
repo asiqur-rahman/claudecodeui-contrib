@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 
 import { CommandCodeSessionsProvider } from '@/modules/providers/list/command-code/command-code-sessions.provider.js';
+import {
+  appendImagesInputTag,
+  getGlobalImageAssetsDir,
+  toPosixPath,
+} from '@/shared/image-attachments.js';
 
 const SESSION_ID = 'command-code-session';
 const TOOL_CALL_ID = 'call_00_GQe4aOlQbO1rFj66G22n1432';
@@ -145,4 +152,59 @@ test('command code history: a persisted call keeps its input and pairs with its 
   // the call; a result keyed by anything else renders as its own empty row.
   assert.equal(result?.toolId, call?.toolId);
   assert.equal(result?.content, 'hello-from-cc\n');
+});
+
+// ---------------------------------------------------------------- attachments
+
+const userRow = (content: string) => ({
+  type: 'message',
+  id: 'row-user',
+  timestamp: '2026-09-16T10:00:00.000Z',
+  message: { role: 'user', content: [{ type: 'text', text: content }] },
+});
+
+/** The prompt the runtime actually sent: a path list pointing at the staged copy. */
+const stagedPromptFor = (prompt: string) => appendImagesInputTag(prompt, [{
+  path: path.join(os.tmpdir(), 'cloudcli-attachments', SESSION_ID, '1-shot.png'),
+  name: '1-shot.png',
+}]);
+
+test('command code history: a user turn strips the attachment block and restores the stored path', () => {
+  const provider = new CommandCodeSessionsProvider();
+
+  const messages = provider.normalizeMessage(
+    userRow(stagedPromptFor('What is in this screenshot?')),
+    SESSION_ID,
+  );
+
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].role, 'user');
+  assert.equal(messages[0].content, 'What is in this screenshot?');
+  // The staged copy outlives nothing and is not what the chat's asset route
+  // serves, so the turn keeps the stored file it was copied from.
+  assert.deepEqual(messages[0].images, [
+    { path: toPosixPath(path.join(getGlobalImageAssetsDir(), '1-shot.png')), name: '1-shot.png' },
+  ]);
+});
+
+test('command code history: an attachment-only turn still produces a bubble', () => {
+  const provider = new CommandCodeSessionsProvider();
+
+  const messages = provider.normalizeMessage(userRow(stagedPromptFor('')), SESSION_ID);
+
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].content, '');
+  assert.ok(Array.isArray(messages[0].images));
+  assert.equal(messages[0].images.length, 1);
+});
+
+test('command code history: a plain user turn is left untouched', () => {
+  const provider = new CommandCodeSessionsProvider();
+
+  const messages = provider.normalizeMessage(userRow('just some prose'), SESSION_ID);
+
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].content, 'just some prose');
+  assert.equal(messages[0].images, undefined);
+  assert.equal(messages[0].files, undefined);
 });

@@ -183,8 +183,13 @@ layout and lifecycle skeleton*, never for row-parsing semantics.
   `acceptEdits` → `--permission-mode auto-accept`, `bypassPermissions` → `--yolo`
   (`dont-ask`), `plan` → `--plan`, `default`/`auto` → `--permission-mode default`. A UI value
   may map to only one CLI value (no silent aliasing). Fix the capability flags for
-  `command-code` explicitly: `supportsImages:false` and `supportsFiles:false` (the CLI has **no
-  `-p` attachment flag — offering upload would render a control whose payload has no vehicle);
+  `command-code` explicitly: `supportsImages:true` and `supportsFiles:true` (superseding the
+  first version of this rule, which read the absence of a `-p` attachment flag as the absence of
+  a vehicle: attachments ride along as the `<images_input>`/`<files_input>` path lists the agent
+  reads with its own tools, exactly as they do for Cursor and OpenCode. The run is handed copies
+  staged in the OS temp dir, because Command Code confines reads to the workspace, the upload
+  store sits outside it, and headless has no prompt to admit a directory through — while the
+  temp dir is the one location every permission mode grants silently);
   `supportsPermissionRequests:false` (headless has no interactive prompt channel — permission
   is set pre-launch via `--permission-mode`/`--yolo`); `supportsTokenUsage:true` (read the
   transcript-tail `usage`, via the AD-10 token-usage branch); `supportsAbort:true`;

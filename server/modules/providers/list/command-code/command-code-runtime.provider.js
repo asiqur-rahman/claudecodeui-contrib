@@ -1,5 +1,11 @@
 import crossSpawn from 'cross-spawn';
 
+import {
+  appendFilesInputTag,
+  appendImagesInputTag,
+  normalizeAttachmentDescriptors,
+  stageAttachmentsInTempDir,
+} from '@/shared/image-attachments.js';
 import { notifyRunFailed, notifyRunStopped } from '@/modules/notifications/index.js';
 import {
   createCompleteMessage,
@@ -248,15 +254,27 @@ async function spawnCommandCode(command, options = {}, ws, context) {
       args.push(...resolveCommandCodePermissionArgs(permissionMode));
 
       const hasAttachments =
-        (Array.isArray(images) && images.length > 0)
-        || (Array.isArray(files) && files.length > 0);
+        normalizeAttachmentDescriptors(images).length > 0
+        || normalizeAttachmentDescriptors(files).length > 0;
       if ((command && command.trim()) || hasAttachments) {
-        // Note: Command Code's headless `-p` mode has no image/file attachment
-        // flag today; images/files are intentionally not appended (AD-11 sets
-        // supportsImages/supportsFiles false). The prompt is flattened on win32
-        // because `command-code` is a `.cmd`/`.ps1` shim there and cmd.exe
-        // truncates argv at the first newline.
-        args.push(flattenPromptForWindowsShell(command?.trim() || ''));
+        // Headless `-p` has no attachment flag, so images and files ride along
+        // as path lists the agent reads with its own tools — `read_file` hands
+        // an image to the model, which is how a Command Code turn sees one.
+        // The copies are staged in the OS temp dir because Command Code confines
+        // reads to the workspace and a headless run has no prompt to admit the
+        // upload store through. The session history reader strips both tags back
+        // out and maps the copies to the stored files they came from. The prompt
+        // is flattened on win32 because `command-code` is a `.cmd`/`.ps1` shim
+        // there and cmd.exe truncates argv at the first newline.
+        const [stagedImages, stagedFiles] = await Promise.all([
+          stageAttachmentsInTempDir(images, sessionId),
+          stageAttachmentsInTempDir(files, sessionId),
+        ]);
+        const promptWithAttachments = appendFilesInputTag(
+          appendImagesInputTag(command?.trim() || '', stagedImages),
+          stagedFiles,
+        );
+        args.push(flattenPromptForWindowsShell(promptWithAttachments));
       }
 
       commandCodeProcess = spawnFunction(COMMAND_CODE_BINARY, args, {

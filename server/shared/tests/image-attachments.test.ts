@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -16,8 +17,25 @@ import {
   parseFilesInputTag,
   parseImagesInputTag,
   resolveImageMediaType,
+  resolveStagedAttachmentPath,
+  stageAttachmentsInTempDir,
   toImageAttachments,
+  toPosixPath,
 } from '@/shared/image-attachments.js';
+
+/**
+ * Points the upload store at a fixture folder so a staging test never reads the
+ * real one. The temp dir is deliberately left alone: test files run in parallel,
+ * and redirecting a root this test later deletes could take another file's
+ * fixtures with it.
+ */
+const patchHomeDir = (nextHomeDir: string) => {
+  const originalHomedir = os.homedir;
+  (os as any).homedir = () => nextHomeDir;
+  return () => {
+    (os as any).homedir = originalHomedir;
+  };
+};
 
 // 1x1 transparent PNG
 const PNG_BYTES = Buffer.from(
@@ -350,4 +368,83 @@ test('provider builders refuse descriptors outside the allowed roots', async () 
     cwd,
   );
   assert.deepEqual(claudeContent, [{ type: 'text', text: 'prompt' }]);
+});
+
+// A CLI that reads attachment paths itself is bound by its own workspace rules:
+// Command Code denies a read of the upload store and allows the OS temp dir, so
+// the run is handed copies. See stageAttachmentsInTempDir.
+test('stageAttachmentsInTempDir copies a stored attachment and reports the copy', async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'image-staging-'));
+  const restoreHomeDir = patchHomeDir(tempRoot);
+  // A name of this test's own, so its cleanup cannot reach another run's copies.
+  const sessionId = 'staging-copy';
+  const stagedDir = path.join(os.tmpdir(), 'cloudcli-attachments', sessionId);
+
+  try {
+    const storeDir = path.join(tempRoot, '.cloudcli', 'assets');
+    await mkdir(storeDir, { recursive: true });
+    await writeFile(path.join(storeDir, '1-shot.png'), PNG_BYTES);
+
+    const staged = await stageAttachmentsInTempDir(
+      [{ path: '1-shot.png', name: 'shot.png' }],
+      sessionId,
+    );
+
+    assert.equal(staged.length, 1);
+    // The copy keeps the stored filename: it is what the chat's asset route
+    // serves and what the history reader maps back.
+    assert.equal(path.basename(staged[0].path), '1-shot.png');
+    assert.equal(staged[0].name, 'shot.png');
+    assert.equal(staged[0].path, path.join(stagedDir, '1-shot.png'));
+    assert.deepEqual(await readFile(staged[0].path), PNG_BYTES);
+
+    assert.equal(
+      resolveStagedAttachmentPath(staged[0].path),
+      toPosixPath(path.join(storeDir, '1-shot.png')),
+    );
+  } finally {
+    restoreHomeDir();
+    await rm(tempRoot, { recursive: true, force: true });
+    await rm(stagedDir, { recursive: true, force: true });
+  }
+});
+
+test('stageAttachmentsInTempDir refuses anything outside the upload store', async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'image-staging-outside-'));
+  const restoreHomeDir = patchHomeDir(tempRoot);
+  const sessionId = 'staging-refused';
+  const stagedDir = path.join(os.tmpdir(), 'cloudcli-attachments', sessionId);
+
+  try {
+    const storeDir = path.join(tempRoot, '.cloudcli', 'assets');
+    await mkdir(storeDir, { recursive: true });
+    // Secrets that a caller-supplied descriptor must not be able to turn into a
+    // readable copy inside the temp dir.
+    const outsidePath = path.join(tempRoot, 'id_rsa');
+    await writeFile(outsidePath, 'PRIVATE');
+
+    const staged = await stageAttachmentsInTempDir(
+      [{ path: outsidePath }, { path: '../id_rsa' }, { path: 'nested/shot.png' }],
+      sessionId,
+    );
+
+    assert.deepEqual(staged, []);
+    assert.equal(existsSync(stagedDir), false);
+  } finally {
+    restoreHomeDir();
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('stageAttachmentsInTempDir has nothing to do without attachments', async () => {
+  assert.deepEqual(await stageAttachmentsInTempDir([], 'session-1'), []);
+  assert.deepEqual(await stageAttachmentsInTempDir(undefined, 'session-1'), []);
+});
+
+test('resolveStagedAttachmentPath leaves a stored path untouched', () => {
+  const storedPath = path.join(os.homedir(), '.cloudcli', 'assets', '1-shot.png');
+  assert.equal(resolveStagedAttachmentPath(storedPath), storedPath);
+  // An unrelated temp file is not one of ours and must survive verbatim.
+  const otherTempPath = path.join(os.tmpdir(), 'unrelated.png');
+  assert.equal(resolveStagedAttachmentPath(otherTempPath), otherTempPath);
 });

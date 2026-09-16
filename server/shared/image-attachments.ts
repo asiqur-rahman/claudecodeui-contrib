@@ -2,6 +2,8 @@ import { promises as fs, realpathSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { sanitizeLeafDirectoryName } from './utils.js';
+
 /**
  * Shared chat-attachment plumbing for every provider runtime.
  *
@@ -12,6 +14,8 @@ import path from 'node:path';
  * - General files: verified paths are appended inside a `<files_input>` tag,
  *   which every provider history adapter strips back out for display.
  * - Cursor/OpenCode images: paths use the equivalent `<images_input>` tag.
+ * - Command Code: the same tags, carrying copies staged in the OS temp dir
+ *   because its reads are confined to the workspace (stageAttachmentsInTempDir).
  *
  * The chat UI loads them through dedicated `/api/assets/images/:filename` and
  * `/api/assets/files/:filename` routes, which serve only from this folder.
@@ -350,6 +354,109 @@ export function parseImagesInputTag(text: string): ParsedImagesInput {
 /** Maps raw image paths to the attachment shape carried by NormalizedMessage.images. */
 export function toImageAttachments(imagePaths: string[]): Array<{ path: string }> {
   return imagePaths.map((imagePath) => ({ path: toPosixPath(imagePath) }));
+}
+
+//----------------- TEMP-DIR STAGING ------------
+
+/**
+ * Folder under the OS temp dir holding the per-run copies of chat attachments.
+ *
+ * A provider CLI that is handed a path list reads the file itself, and its own
+ * workspace boundary decides whether it may. The upload store lives outside the
+ * workspace, and a headless run has no prompt to admit it through — a tagged
+ * read there is denied outright — while the OS temp dir is granted silently in
+ * every permission mode. Copies live here so that read is permitted.
+ */
+function getStagedAttachmentsRoot(): string {
+  return path.join(os.tmpdir(), 'cloudcli-attachments');
+}
+
+/** Names the per-run folder, falling back when a session id cannot be a path leaf. */
+function resolveStagedSessionDir(sessionId: string | null | undefined): string {
+  let directoryName = 'session';
+  try {
+    directoryName = sanitizeLeafDirectoryName(String(sessionId ?? ''));
+  } catch {
+    // A session id that cannot be a directory name still gets a usable folder;
+    // the copies only have to outlive this run, not be addressable again.
+  }
+  return path.join(getStagedAttachmentsRoot(), directoryName);
+}
+
+/**
+ * Copies chat attachments into the OS temp dir and returns descriptors pointing
+ * at the copies, so a CLI that reads attachment paths itself is allowed to.
+ *
+ * Only files that are direct children of the global upload store are copied:
+ * without that check a caller-supplied path would turn the temp dir into a
+ * readable copy of any file on the machine. A copy that cannot be made is
+ * skipped with a warning rather than failing the run, which then simply runs
+ * without that attachment.
+ *
+ * Copies are not cleaned up — they live under the OS temp dir, which the
+ * platform prunes on its own schedule.
+ */
+export async function stageAttachmentsInTempDir(
+  attachments: unknown,
+  sessionId: string | null | undefined,
+): Promise<ChatAttachmentDescriptor[]> {
+  const descriptors = normalizeAttachmentDescriptors(attachments);
+  if (descriptors.length === 0) {
+    return [];
+  }
+
+  const assetsRoot = path.resolve(getGlobalImageAssetsDir());
+  const sessionDir = resolveStagedSessionDir(sessionId);
+  const staged: ChatAttachmentDescriptor[] = [];
+
+  for (const descriptor of descriptors) {
+    const source = path.resolve(assetsRoot, descriptor.path);
+    const relative = path.relative(assetsRoot, source);
+    const isStoredFile =
+      relative.length > 0
+      && !relative.startsWith('..')
+      && !path.isAbsolute(relative)
+      && !relative.includes(path.sep)
+      && !relative.includes('/');
+
+    if (!isStoredFile) {
+      console.warn(`[Images] Refusing to stage attachment outside the upload store: ${descriptor.path}`);
+      continue;
+    }
+
+    try {
+      await fs.mkdir(sessionDir, { recursive: true });
+      // The stored filename is kept: it is what the chat's asset route serves,
+      // and what {@link resolveStagedAttachmentPath} maps back for display.
+      const stagedPath = path.join(sessionDir, path.basename(source));
+      await fs.copyFile(source, stagedPath);
+      staged.push({ ...descriptor, path: stagedPath });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[Images] Failed to stage attachment ${descriptor.path}: ${message}`);
+    }
+  }
+
+  return staged;
+}
+
+/**
+ * Maps an attachment path recorded in a persisted prompt back to the upload
+ * store, leaving any other path untouched.
+ *
+ * A prompt sent through {@link stageAttachmentsInTempDir} records the temp copy,
+ * which outlives nothing and is not a folder the chat's asset route serves.
+ * Both paths end in the stored filename, so restoring means re-anchoring that
+ * name in the store.
+ */
+export function resolveStagedAttachmentPath(attachmentPath: string): string {
+  const resolved = path.resolve(attachmentPath);
+  const stagedRoot = path.resolve(getStagedAttachmentsRoot()) + path.sep;
+  if (!resolved.startsWith(stagedRoot)) {
+    return attachmentPath;
+  }
+
+  return toPosixPath(path.join(getGlobalImageAssetsDir(), path.basename(resolved)));
 }
 
 type ClaudeContentBlock =
