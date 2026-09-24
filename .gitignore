@@ -151,3 +151,7 @@ electron/*.tar.gz
 # Python caches (agent skill tooling)
 __pycache__/
 *.pyc
+
+# Test fixtures created beside the tests (cleaned up by the tests; kept out of the tree if a run is killed)
+server/**/tests/read-only-roots-fixture-*/
+server/**/tests/file-tree-outside-*/
