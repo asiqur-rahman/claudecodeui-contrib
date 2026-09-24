@@ -61,7 +61,11 @@ type CloneProjectDependencies = {
     userId: number,
     credentialType: string,
   ) => Promise<{ credential_value: string } | null>;
-  spawnGitClone: (cloneUrl: string, clonePath: string) => GitCloneProcess;
+  spawnGitClone: (
+    cloneUrl: string,
+    clonePath: string,
+    environment: NodeJS.ProcessEnv,
+  ) => GitCloneProcess;
   registerProject: (projectPath: string, customName: string) => Promise<{ project: Record<string, unknown> }>;
   logError: (message: string, error: unknown) => void;
 };
@@ -84,16 +88,53 @@ async function defaultPathExists(targetPath: string): Promise<boolean> {
   }
 }
 
-function sanitizeGitError(message: string, token: string | null): string {
-  if (!message || !token) {
-    return message;
-  }
-
-  const escapedToken = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return message.replace(new RegExp(escapedToken, 'g'), '***');
+/**
+ * Builds the credential-helper key for one origin. The helper answers a
+ * challenge from that host over https only; a helper that answered every
+ * challenge would hand the token to whatever host the clone URL names — and
+ * over plain http, in the clear.
+ */
+function buildCredentialHelperScope(host: string): string {
+  return `credential.https://${host}.helper`;
 }
 
-function resolveCloneFailureMessage(lastError: string, sanitizedError: string): string {
+/**
+ * Builds the environment the clone runs in. The token never goes into the
+ * clone URL: git echoes that URL on stderr (which is the SSE progress stream),
+ * it sits in the process argv (readable through /proc) and it is written to the
+ * cloned repo's `.git/config` as the remote. Instead env-only config points git
+ * at a credential helper that reads the token from its own environment, so no
+ * channel git exposes carries it. The empty first helper entry clears any
+ * helper configured on the machine so a credential stored there cannot shadow
+ * the one the user selected.
+ *
+ * `host` is the host the clone URL named and the provider check accepted, so
+ * the helper is scoped to that one origin; `username` is the form the selected
+ * provider authenticates with. Without a host there is nothing to scope the
+ * helper to (an SSH clone consumes no https credential), so no helper is
+ * configured at all.
+ */
+function buildGitCloneEnvironment(
+  githubToken: string | null,
+  scope: { host: string | null; username: string },
+): NodeJS.ProcessEnv {
+  if (!githubToken || !scope.host) {
+    return { ...process.env, GIT_TERMINAL_PROMPT: '0' };
+  }
+
+  return {
+    ...process.env,
+    GIT_CONFIG_COUNT: '2',
+    GIT_CONFIG_KEY_0: 'credential.helper',
+    GIT_CONFIG_VALUE_0: '',
+    GIT_CONFIG_KEY_1: buildCredentialHelperScope(scope.host),
+    GIT_CONFIG_VALUE_1: `!f() { echo username=${scope.username}; echo "password=$CLOUDCLI_GITHUB_TOKEN"; }; f`,
+    CLOUDCLI_GITHUB_TOKEN: githubToken,
+    GIT_TERMINAL_PROMPT: '0',
+  };
+}
+
+function resolveCloneFailureMessage(lastError: string): string {
   if (lastError.includes('Authentication failed') || lastError.includes('could not read Username')) {
     return 'Authentication failed. Please check your credentials.';
   }
@@ -106,11 +147,7 @@ function resolveCloneFailureMessage(lastError: string, sanitizedError: string): 
     return 'Directory already exists';
   }
 
-  if (sanitizedError) {
-    return sanitizedError;
-  }
-
-  return 'Git clone failed';
+  return lastError || 'Git clone failed';
 }
 
 function resolveErrorMessage(error: unknown): string {
@@ -141,13 +178,14 @@ const defaultDependencies: CloneProjectDependencies = {
   ): Promise<{ credential_value: string } | null> => {
     return credentialsDb.getCredentialById(userId, credentialId, credentialType);
   },
-  spawnGitClone: (cloneUrl: string, clonePath: string): GitCloneProcess =>
+  spawnGitClone: (
+    cloneUrl: string,
+    clonePath: string,
+    environment: NodeJS.ProcessEnv,
+  ): GitCloneProcess =>
     spawn('git', ['clone', '--progress', '--', cloneUrl, clonePath], {
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: {
-        ...process.env,
-        GIT_TERMINAL_PROMPT: '0',
-      },
+      env: environment,
     }) as unknown as GitCloneProcess,
   registerProject: async (
     projectPath: string,
@@ -162,11 +200,40 @@ const defaultDependencies: CloneProjectDependencies = {
   },
 };
 
+/**
+ * Whether a clone URL embeds a credential: any password, or a username on an
+ * http(s) URL. An SSH URL's `git@` is a login name, not a secret.
+ */
+function carriesCredentials(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    // scp-like `git@github.com:org/repo.git` and bare paths are not URLs;
+    // an scp-like user is an SSH login, which is not a credential.
+    return false;
+  }
+  if (parsed.password) {
+    return true;
+  }
+  return Boolean(parsed.username) && (parsed.protocol === 'http:' || parsed.protocol === 'https:');
+}
+
+function isParsableUrl(url: string): boolean {
+  try {
+    new URL(url);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function startCloneProject(
   input: CloneProjectInput,
   handlers: CloneProjectEventHandlers,
-  dependencies: CloneProjectDependencies = defaultDependencies,
+  dependencyOverrides: Partial<CloneProjectDependencies> = {},
 ): Promise<CloneProjectOperation> {
+  const dependencies = { ...defaultDependencies, ...dependencyOverrides };
   const normalizedWorkspacePath = input.workspacePath.trim();
   const normalizedGithubUrl = input.githubUrl.trim();
 
@@ -187,6 +254,25 @@ export async function startCloneProject(
   if (normalizedGithubUrl.startsWith('-')) {
     throw new AppError('Invalid githubUrl', {
       code: 'INVALID_GITHUB_URL',
+      statusCode: 400,
+    });
+  }
+
+  // An http(s) string the URL parser rejects (a bad port, a space in the
+  // host) is one curl rejects too — but only after git has carried it, and
+  // any credential in it, on its command line.
+  if (/^https?:/i.test(normalizedGithubUrl) && !isParsableUrl(normalizedGithubUrl)) {
+    throw new AppError('Invalid githubUrl', {
+      code: 'INVALID_GITHUB_URL',
+      statusCode: 400,
+    });
+  }
+
+  if (carriesCredentials(normalizedGithubUrl)) {
+    // The token field is the only way in: a credential in the URL would ride
+    // git's argv, its stderr and the clone's `.git/config`.
+    throw new AppError('Put the token in the token field, not in the URL', {
+      code: 'GITHUB_URL_CARRIES_CREDENTIALS',
       statusCode: 400,
     });
   }
@@ -250,49 +336,44 @@ export async function startCloneProject(
     );
   }
 
-  let cloneUrl = normalizedGithubUrl;
+  // The host the clone will talk to, when its URL names one. A credential is
+  // only ever offered to that host over https (see buildGitCloneEnvironment),
+  // so the URL's own scheme is not what keeps the token safe — which is why a
+  // local `file://` URL or a plain-http remote stays cloneable, anonymously.
+  let cloneHost: string | null = null;
   try {
-    const url = new URL(normalizedGithubUrl);
-    if (url.protocol !== 'https:') {
-      throw new AppError('Repository URL must use HTTPS', {
-        code: 'INVALID_GITHUB_URL',
-        statusCode: 400,
-      });
-    }
-    validateUrlMatchesProvider(gitProvider, url.hostname);
-
-    if (githubToken) {
-      const providerCreds = getNonGithubBasicAuthCredentials(gitProvider, githubToken);
-      if (providerCreds) {
-        url.username = providerCreds.username;
-        url.password = providerCreds.password;
-      } else {
-        url.username = githubToken;
-        url.password = '';
-      }
-      cloneUrl = url.toString();
-    }
-  } catch (error) {
-    if (error instanceof AppError) {
-      throw error;
-    }
-
+    cloneHost = new URL(normalizedGithubUrl).hostname || null;
+  } catch {
     // new URL() rejects SCP-style SSH syntax (git@host:owner/repo.git) outright;
-    // validate the host it names directly instead of skipping validation.
-    const sshHost = extractScpLikeSshHost(normalizedGithubUrl);
-    if (!sshHost) {
+    // read the host it names directly instead of skipping validation.
+    cloneHost = extractScpLikeSshHost(normalizedGithubUrl);
+    if (!cloneHost) {
       throw new AppError('Invalid githubUrl', {
         code: 'INVALID_GITHUB_URL',
         statusCode: 400,
       });
     }
-    validateUrlMatchesProvider(gitProvider, sshHost);
+  }
+  if (cloneHost) {
+    validateUrlMatchesProvider(gitProvider, cloneHost);
   }
 
+  const providerCredentials = githubToken
+    ? getNonGithubBasicAuthCredentials(gitProvider, githubToken)
+    : null;
   handlers.onProgress(`Cloning into '${repoName}'...`);
-  const gitProcess = dependencies.spawnGitClone(cloneUrl, clonePath);
+  const gitProcess = dependencies.spawnGitClone(
+    normalizedGithubUrl,
+    clonePath,
+    buildGitCloneEnvironment(githubToken, {
+      host: cloneHost,
+      username: providerCredentials?.username ?? 'x-access-token',
+    }),
+  );
   let lastError = '';
 
+  // `git clone --progress` writes every byte of its progress to stderr. Git
+  // was handed a credential-free URL, so each chunk is forwarded as it arrives.
   gitProcess.stdout?.on('data', (data: Buffer | string) => {
     const message = data.toString().trim();
     if (message) {
@@ -302,8 +383,8 @@ export async function startCloneProject(
 
   gitProcess.stderr?.on('data', (data: Buffer | string) => {
     const message = data.toString().trim();
-    lastError = message;
     if (message) {
+      lastError = message;
       handlers.onProgress(message);
     }
   });
@@ -329,8 +410,7 @@ export async function startCloneProject(
         return;
       }
 
-      const sanitizedError = sanitizeGitError(lastError, githubToken);
-      const errorMessage = resolveCloneFailureMessage(lastError, sanitizedError);
+      const errorMessage = resolveCloneFailureMessage(lastError);
 
       try {
         await dependencies.removePath(clonePath);
