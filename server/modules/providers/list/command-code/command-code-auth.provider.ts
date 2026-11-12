@@ -4,7 +4,8 @@ import path from 'node:path';
 import spawn from 'cross-spawn';
 
 import type { IProviderAuth } from '@/shared/interfaces.js';
-import type { ProviderAuthStatus } from '@/shared/types.js';
+import type { CliVersionProbe, ProviderAuthStatus } from '@/shared/types.js';
+import { probeCliVersion } from '@/shared/utils.js';
 
 const COMMAND_CODE_BINARY = 'command-code';
 
@@ -52,36 +53,11 @@ const parseStatusPayload = (raw: unknown): CommandCodeStatusPayload | null => {
  */
 export class CommandCodeProviderAuth implements IProviderAuth {
   /**
-   * Checks whether the Command Code CLI is available without blocking the
-   * event loop. Resolves after at most five seconds.
+   * Checks whether the Command Code CLI is available on this host, and which
+   * version it is.
    */
-  private checkInstalled(): Promise<boolean> {
-    return new Promise((resolve) => {
-      let child: ReturnType<typeof spawn.spawn>;
-      try {
-        child = spawn(COMMAND_CODE_BINARY, ['--version'], {
-          stdio: 'ignore',
-        });
-      } catch {
-        resolve(false);
-        return;
-      }
-
-      const timeout = setTimeout(() => {
-        child.kill('SIGTERM');
-        resolve(false);
-      }, 5000);
-
-      child.on('error', () => {
-        clearTimeout(timeout);
-        resolve(false);
-      });
-
-      child.on('close', (code) => {
-        clearTimeout(timeout);
-        resolve(code === 0);
-      });
-    });
+  checkInstalled(): CliVersionProbe {
+    return probeCliVersion(COMMAND_CODE_BINARY);
   }
 
   /**
@@ -164,12 +140,13 @@ export class CommandCodeProviderAuth implements IProviderAuth {
   }
 
   async getStatus(): Promise<ProviderAuthStatus> {
-    const installed = await this.checkInstalled();
+    const { installed, version: installedVersion } = this.checkInstalled();
 
     if (!installed) {
       return {
         installed,
         provider: 'command-code',
+        installedVersion,
         authenticated: false,
         email: null,
         method: null,
@@ -182,6 +159,7 @@ export class CommandCodeProviderAuth implements IProviderAuth {
     return {
       installed,
       provider: 'command-code',
+      installedVersion,
       authenticated: credentials.authenticated,
       email: credentials.authenticated ? credentials.email || 'Authenticated' : credentials.email,
       method: credentials.method,
