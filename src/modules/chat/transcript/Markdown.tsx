@@ -10,6 +10,7 @@ import { useTranslation } from 'react-i18next';
 import { MermaidDiagram } from '@/modules/code-editor';
 import { MarkdownImage } from '@/modules/chat/transcript/MarkdownImage';
 import { normalizeInlineCodeFences } from '@/modules/chat/utils/chatFormatting';
+import { normalizeLatexDelimiters } from '@/modules/chat/utils/latexDelimiters';
 import { copyTextToClipboard } from '@/shared/utils';
 import { SyntaxHighlighter } from '@/shared/syntaxHighlighter';
 import { usePaletteOps } from '@/modules/command-palette';
@@ -39,6 +40,24 @@ const lineFromRef = (value: string): number | null => {
 // Strip a trailing `:line` / `:line:col` suffix (e.g. `src/foo.ts:130`).
 const stripLineSuffix = (value: string): string => value.replace(/:\d+(?::\d+)?$/, '');
 
+// Markdown hrefs are URLs, while the editor needs a filesystem path. Decode
+// once at this boundary; repeated decoding would rename literal `%20` files.
+const decodeFileHref = (value: string): string => {
+  // Match one UTF-8 character at a time so a literal percent or an invalid
+  // byte sequence cannot prevent valid escapes elsewhere from decoding.
+  return value.replace(
+    /%(?:[0-7][\da-f]|[cd][\da-f]%[89ab][\da-f]|e[\da-f](?:%[89ab][\da-f]){2}|f[0-4](?:%[89ab][\da-f]){3})/gi,
+    (encodedCharacter) => {
+      try {
+        return decodeURIComponent(encodedCharacter);
+      } catch {
+        // Preserve invalid UTF-8 (including overlong or surrogate encodings).
+        return encodedCharacter;
+      }
+    },
+  );
+};
+
 // A usable file path contains a separator or a filename with an extension.
 const looksLikeFilePath = (value?: string): value is string => {
   if (!value) {
@@ -66,8 +85,10 @@ const childrenToText = (children: React.ReactNode): string => {
   return '';
 };
 
-// The delimiters `remark-math` recognizes with `singleDollarTextMath` off.
-const MATH_DELIMITER = /\$\$|\\\(|\\\[/;
+// The only delimiter `remark-math` recognizes with `singleDollarTextMath` off.
+// `\(…\)` and `\[…\]` are already rewritten to `$$` by normalizeLatexDelimiters,
+// so this one probe covers both notations.
+const MATH_DELIMITER = /\$\$/;
 
 const EMPTY_PLUGINS: never[] = [];
 
@@ -257,7 +278,9 @@ const markdownComponents = {
  */
 function MarkdownBodyRenderer({ children, breaks = false }: Omit<MarkdownProps, 'className'>) {
   const content = useMemo(
-    () => normalizeInlineCodeFences(String(children ?? '')),
+    // The LaTeX pass runs second because it reads the code spans the fence pass
+    // normalizes, and must leave the LaTeX inside them literal.
+    () => normalizeLatexDelimiters(normalizeInlineCodeFences(String(children ?? ''))),
     [children],
   );
   // Math support costs a remark tree pass plus a full KaTeX walk on every
@@ -287,7 +310,10 @@ function MarkdownBodyRenderer({ children, breaks = false }: Omit<MarkdownProps, 
         // Prefer the href when it is a real path; otherwise fall back to the
         // link text, since models often emit `[src/foo.ts]()` with an empty href.
         const linkText = childrenToText(linkChildren);
-        const fileRef = looksLikeFilePath(href) ? href : looksLikeFilePath(linkText) ? linkText : undefined;
+        // Classify a decoded copy, retaining the original for line metadata.
+        const fileRef = looksLikeFilePath(href && decodeFileHref(href))
+          ? href
+          : looksLikeFilePath(linkText) ? linkText : undefined;
 
         if (fileRef && !isExternalHref(href)) {
           return (
@@ -301,11 +327,16 @@ function MarkdownBodyRenderer({ children, breaks = false }: Omit<MarkdownProps, 
                 // trailing space (``[`src/foo.ts:12` ]()``), and that space
                 // defeats the `$`-anchored suffix strip.
                 const reference = fileRef.trim();
-                if (reference.endsWith('/')) {
-                  openDirectory(reference);
+                // Strip line metadata before decoding so an encoded colon in
+                // a filename is not mistaken for a line suffix. Link text is
+                // already literal text and must not be URL-decoded.
+                const path = stripLineSuffix(reference);
+                const filePath = href === fileRef ? decodeFileHref(path) : path;
+                if (filePath.endsWith('/')) {
+                  openDirectory(filePath);
                   return;
                 }
-                openFileInEditor(stripLineSuffix(reference), lineFromRef(reference));
+                openFileInEditor(filePath, lineFromRef(reference));
               }}
             >
               {linkChildren}

@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { api, readApiJson } from '@/shared/api';
 import type { CodeEditorFile } from '@/shared/types';
+import { downloadBlob } from '@/shared/utils';
 import { isBinaryFile } from '@/modules/code-editor/utils/binaryFile';
 import { getPreviewKind } from '@/modules/code-editor/utils/previewableFile';
 
@@ -18,8 +19,17 @@ const getErrorMessage = (error: unknown) => {
   return String(error);
 };
 
+// CodeMirror reports its document with LF line endings whatever the file used,
+// so a CRLF file would look edited from the first keystroke (and stay "edited"
+// after an undo) unless both sides of the comparison are normalised.
+const normalizeLineEndings = (text: string) => text.replace(/\r\n?/g, '\n');
+
 export const useCodeEditorDocument = ({ file, projectPath }: UseCodeEditorDocumentParams) => {
   const [content, setContent] = useState('');
+  // The text as last loaded from disk or written back by a save. The buffer is
+  // compared against it to tell whether closing or switching files would
+  // discard edits; nothing else in the app knows that baseline.
+  const [savedContent, setSavedContent] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
@@ -36,26 +46,43 @@ export const useCodeEditorDocument = ({ file, projectPath }: UseCodeEditorDocume
   const fileName = file.name;
   const fileDiffNewString = file.diffInfo?.new_string;
   const fileDiffOldString = file.diffInfo?.old_string;
+  // Counts the loads this editor has performed. A read or save still in flight
+  // when another file is opened belongs to the previous file and must not land
+  // on the new one's buffer, baseline or save state.
+  const loadGenerationRef = useRef(0);
 
   useEffect(() => {
+    const loadGeneration = ++loadGenerationRef.current;
+    const isStaleLoad = () => loadGenerationRef.current !== loadGeneration;
+
+    // Every load path resets the saved baseline together with the buffer, so a
+    // freshly opened file (or an error placeholder) never counts as dirty.
+    const applyLoadedContent = (text: string) => {
+      setContent(text);
+      setSavedContent(text);
+    };
+
     const loadFileContent = async () => {
       try {
         setLoading(true);
         setIsBinary(false);
+        // Any save still in flight or failed belongs to the previous file.
+        setSaving(false);
+        setSaveError(null);
 
         // Natively previewable media (image/pdf/audio/video) is rendered by
         // CodeEditorMediaPreview, so there is nothing to read as text here.
         // Clear any buffer left over from a previously opened text file so a
         // stray save can't write stale content over the binary file.
         if (getPreviewKind(file.name)) {
-          setContent('');
+          applyLoadedContent('');
           setLoading(false);
           return;
         }
 
         // Check if file is binary by extension
         if (isBinaryFile(file.name)) {
-          setContent('');
+          applyLoadedContent('');
           setIsBinary(true);
           setLoading(false);
           return;
@@ -63,7 +90,7 @@ export const useCodeEditorDocument = ({ file, projectPath }: UseCodeEditorDocume
 
         // Diff payload may already include full old/new snapshots, so avoid disk read.
         if (file.diffInfo && fileDiffNewString !== undefined && fileDiffOldString !== undefined) {
-          setContent(fileDiffNewString);
+          applyLoadedContent(fileDiffNewString);
           setLoading(false);
           return;
         }
@@ -77,13 +104,21 @@ export const useCodeEditorDocument = ({ file, projectPath }: UseCodeEditorDocume
         // pane — a directory, a path outside the project root, a missing file.
         // The bare status showed all of those as an opaque "403 Forbidden".
         const data = await readApiJson<{ content: string }>(response);
-        setContent(data.content);
+        if (isStaleLoad()) {
+          return;
+        }
+        applyLoadedContent(data.content);
       } catch (error) {
+        if (isStaleLoad()) {
+          return;
+        }
         const message = getErrorMessage(error);
         console.error('Error loading file:', error);
-        setContent(`// Error loading file: ${message}\n// File: ${fileName}\n// Path: ${filePath}`);
+        applyLoadedContent(`// Error loading file: ${message}\n// File: ${fileName}\n// Path: ${filePath}`);
       } finally {
-        setLoading(false);
+        if (!isStaleLoad()) {
+          setLoading(false);
+        }
       }
     };
 
@@ -96,6 +131,9 @@ export const useCodeEditorDocument = ({ file, projectPath }: UseCodeEditorDocume
     if (previewKind || isBinaryFile(fileName)) {
       return;
     }
+
+    const saveGeneration = loadGenerationRef.current;
+    const isStaleSave = () => loadGenerationRef.current !== saveGeneration;
 
     setSaving(true);
     setSaveError(null);
@@ -121,31 +159,67 @@ export const useCodeEditorDocument = ({ file, projectPath }: UseCodeEditorDocume
 
       await response.json();
 
+      // Another file loaded while this write was in flight: it owns the buffer,
+      // the baseline and the save state now.
+      if (isStaleSave()) {
+        return;
+      }
+
+      // Baseline is the text that was actually sent: anything typed while the
+      // request was in flight is still unsaved.
+      setSavedContent(content);
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 2000);
     } catch (error) {
       const message = getErrorMessage(error);
       console.error('Error saving file:', error);
-      setSaveError(message);
+      if (!isStaleSave()) {
+        setSaveError(message);
+      }
     } finally {
-      setSaving(false);
+      if (!isStaleSave()) {
+        setSaving(false);
+      }
     }
   }, [content, filePath, fileProjectId, previewKind, fileName]);
 
   const handleDownload = useCallback(() => {
-    const blob = new Blob([content], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-
-    anchor.href = url;
-    anchor.download = file.name;
-
-    document.body.appendChild(anchor);
-    anchor.click();
-    document.body.removeChild(anchor);
-
-    URL.revokeObjectURL(url);
+    downloadBlob(new Blob([content], { type: 'text/plain' }), file.name);
   }, [content, file.name]);
+
+  // Binary files have no text buffer, so the bytes come from the raw content
+  // endpoint (the one the Files tab downloads through) rather than `content`.
+  // Rejects on failure so the caller can show it.
+  const handleDownloadOriginal = useCallback(async () => {
+    if (!fileProjectId) {
+      throw new Error('Missing project identifier');
+    }
+
+    const response = await api.readFileBlob(fileProjectId, filePath);
+    if (!response.ok) {
+      throw new Error(`Failed to download file (${response.status})`);
+    }
+
+    downloadBlob(await response.blob(), fileName);
+  }, [fileName, filePath, fileProjectId]);
+
+  // The baseline only changes on load and save, so it is not re-normalised on
+  // every keystroke.
+  const normalizedSavedContent = useMemo(() => normalizeLineEndings(savedContent), [savedContent]);
+
+  // Preview and binary files have no editable buffer, and while a file loads
+  // the buffer still belongs to the previous one. Memoised so renders that do
+  // not change the buffer (a save's spinner and tick) skip the comparison.
+  const hasUnsavedChanges = useMemo(
+    () => (
+      !loading
+      && !previewKind
+      && !isBinary
+      && content !== savedContent
+      && normalizeLineEndings(content) !== normalizedSavedContent
+    ),
+    [content, isBinary, loading, normalizedSavedContent, previewKind, savedContent],
+  );
 
   return {
     content,
@@ -157,7 +231,9 @@ export const useCodeEditorDocument = ({ file, projectPath }: UseCodeEditorDocume
     isBinary,
     previewKind,
     fileProjectId,
+    hasUnsavedChanges,
     handleSave,
     handleDownload,
+    handleDownloadOriginal,
   };
 };

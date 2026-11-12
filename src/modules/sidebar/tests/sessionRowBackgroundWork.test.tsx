@@ -17,6 +17,10 @@ import type { Project, SessionWithProvider, SidebarProjectListProps } from '@/sh
 
 const recordedOptionsProps: Record<string, unknown>[] = [];
 
+vi.mock('@/shared/hooks/useProviderCapabilities', () => ({
+  useSessionForkingProviders: () => new Set(),
+}));
+
 vi.mock('@/modules/sidebar/SessionOptions', () => ({
   default: (props: Record<string, unknown>) => {
     recordedOptionsProps.push(props);
@@ -49,7 +53,11 @@ const renderRow = (state: { isProcessing: boolean; hasBackgroundWork: boolean })
     onSaveEditingSession: noop,
     onProjectSelect: noop,
     onSessionSelect: noop,
+    onArchiveSession: noop,
     onDeleteSession: noop,
+    isSelecting: false,
+    isChecked: false,
+    onToggleSessionSelected: noop,
     t,
     ...state,
   }),

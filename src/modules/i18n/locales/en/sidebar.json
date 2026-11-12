@@ -32,7 +32,15 @@
     "loadingSessions": "Loading sessions...",
     "unnamed": "Unnamed",
     "loading": "Loading...",
-    "showMore": "Show more sessions"
+    "showMore": "Show more sessions",
+    "select": "Select",
+    "selectAll": "Select all",
+    "selectAllLoaded": "Select all loaded",
+    "clearSelection": "Clear",
+    "deleteSelected_one": "Delete {{count}} session",
+    "deleteSelected_other": "Delete {{count}} sessions",
+    "expandForks": "Expand forks of {{session}}",
+    "collapseForks": "Collapse forks of {{session}}"
   },
   "tooltips": {
     "viewEnvironments": "View Environments",
@@ -103,6 +111,8 @@
     "enterProjectPath": "Please enter a project path",
     "deleteSessionFailed": "Failed to delete session. Please try again.",
     "deleteSessionError": "Error deleting session. Please try again.",
+    "archiveSessionFailed": "Failed to archive session. Please try again.",
+    "archiveSessionError": "Error archiving session. Please try again.",
     "renameSessionFailed": "Failed to rename session. Please try again.",
     "renameSessionError": "Error renaming session. Please try again.",
     "deleteProjectFailed": "Failed to remove project. Please try again.",
@@ -115,7 +125,9 @@
     "restoreProjectError": "Error restoring project. Please try again.",
     "restoreSessionFailed": "Failed to restore session. Please try again.",
     "restoreSessionError": "Error restoring session. Please try again.",
-    "forkSessionError": "Could not fork this session. Please try again."
+    "forkSessionError": "Could not fork this session. Please try again.",
+    "deleteSessionsPartialFailure_one": "{{count}} session out of {{total}} could not be deleted. Please try again.",
+    "deleteSessionsPartialFailure_other": "{{count}} of {{total}} sessions could not be deleted. Please try again."
   },
   "version": {
     "updateAvailable": "Update available",
@@ -152,12 +164,20 @@
     "sessionCount_other": "This project contains {{count}} conversations.",
     "removeFromSidebar": "Remove from sidebar only",
     "archiveProject": "Archive project",
-    "archiveSession": "Archive session",
-    "archiveSessionNotice": "Archive keeps the session out of the active list while preserving its history.",
-    "archivedSessionNotice": "This session is already archived. You can keep it hidden or delete it permanently.",
     "deleteSessionPermanently": "Delete permanently",
+    "confirmDeleteSession": "Permanently delete",
+    "deleteSessionNotice": "The session and its history will be removed. This cannot be undone.",
     "deleteAllData": "Delete all data permanently",
     "allConversationsDeleted": "The project will be removed from the sidebar. Your files, memories, and session data will be preserved.",
-    "cannotUndo": "You can re-add the project later."
+    "cannotUndo": "You can re-add the project later.",
+    "confirmDeleteSessions": "What would you like to do with",
+    "deleteSessions_one": "Delete {{count}} Session",
+    "deleteSessions_other": "Delete {{count}} Sessions",
+    "selectedSessions_one": "{{count}} selected session",
+    "selectedSessions_other": "{{count}} selected sessions",
+    "archiveSessions_one": "Archive {{count}} session",
+    "archiveSessions_other": "Archive {{count}} sessions",
+    "archiveSessionsNotice_one": "Archive keeps the session out of the active list while preserving its history.",
+    "archiveSessionsNotice_other": "Archive keeps the sessions out of the active list while preserving their history."
   }
 }
